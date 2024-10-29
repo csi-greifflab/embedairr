@@ -134,3 +134,89 @@ if __name__ == "__main__":
     embedder.run()
 
     print("All outputs saved.")
+
+
+@pytest.fixture
+def mock_args():
+    return [
+        "main.py",
+        "--model_name",
+        "esm2_t33_650M_UR50D",
+        "--fasta_path",
+        "test_data/test.fasta",
+        "--output_path",
+        "test_output",
+        "--cdr3_path",
+        "test_data/test_cdr3.csv",
+        "--context",
+        "0",
+        "--layers",
+        "-1 6",
+        "--pooling",
+        "True",
+        "--return_embeddings",
+        "True",
+        "--pool_cdr3",
+        "True",
+    ]
+
+
+def test_parse_arguments(mock_args):
+    with patch.object(sys, "argv", mock_args):
+        args, output_types = parse_arguments()
+        assert args.model_name == "esm2_t33_650M_UR50D"
+        assert args.fasta_path == "test_data/test.fasta"
+        assert args.output_path == "test_output"
+        assert args.cdr3_path == "test_data/test_cdr3.csv"
+        assert args.context == 0
+        assert args.layers == "-1 6"
+        assert args.pooling is True
+        assert args.return_embeddings is True
+        assert args.pool_cdr3 is True
+        assert "embeddings" in output_types
+        assert "cdr3_extracted" in output_types
+
+
+def test_embedder_initialization(mock_args):
+    with patch.object(sys, "argv", mock_args):
+        args, output_types = parse_arguments()
+        model_name = args.model_name
+        fasta_path = args.fasta_path
+        output_path = args.output_path
+        cdr3_path = args.cdr3_path
+        context = args.context
+        layers = list(map(int, args.layers.strip().split()))
+        pooling = bool(args.pooling)
+        cdr3_pooling = bool(args.pool_cdr3)
+
+        mock_embedder_class = MagicMock()
+        mock_embedder_instance = mock_embedder_class.return_value
+
+        with patch("main.select_model", return_value=mock_embedder_class):
+            embedder = select_model(model_name)
+            embedder = embedder(
+                fasta_path,
+                model_name,
+                output_path,
+                cdr3_path,
+                context,
+                layers,
+                pooling,
+                output_types,
+            )
+
+            mock_embedder_class.assert_called_once_with(
+                fasta_path,
+                model_name,
+                output_path,
+                cdr3_path,
+                context,
+                layers,
+                pooling,
+                output_types,
+            )
+            assert embedder == mock_embedder_instance
+
+
+if __name__ == "__main__":
+    pytest.main()
