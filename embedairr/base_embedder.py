@@ -1,7 +1,6 @@
 import os
 import csv
 import torch
-from Bio import SeqIO
 
 
 class BaseEmbedder:
@@ -42,17 +41,36 @@ class BaseEmbedder:
         print("Loading and batching input sequences...")
 
         seq_dict = dict()
-        with open(fasta_path) as f:
-            for record in SeqIO.parse(f, "fasta"):
-                if gaps:
-                    seq_dict[record.id] = " ".join(
-                        str(record.seq)
-                    )  # AA tokens for hugging face models must be space gapped
+        sequence_id = None
+        sequence_aa = []
+
+        def _flush_current_seq():
+            nonlocal sequence_id, sequence_aa
+            if sequence_id is None:
+                return
+            seq = "".join(sequence_aa)
+            if gaps:
+                seq_dict[sequence_id] = " ".join(seq)
+            else:
+                seq_dict[sequence_id] = seq
+            sequence_id = None
+            sequence_aa = []
+
+        with open(fasta_path, "r") as f:
+            for line_idx, line in enumerate(f):
+                line = line.strip()
+                if line.startswith(">"):
+                    _flush_current_seq()
+                    line = line[1:].strip()
+                    if len(line) > 0:
+                        sequence_id = line
+                    else:
+                        sequence_id = f"seqnum{line_idx:09d}"
                 else:
-                    seq_dict[record.id] = str(record.seq)
-                # print progress
-                if len(seq_dict) % 1000 == 0:
-                    print(f"{len(seq_dict)} sequences loaded", end="\r")
+                    sequence_aa.append(line)
+
+        _flush_current_seq()
+
         return seq_dict
 
     def load_cdr3(self, cdr3_path):

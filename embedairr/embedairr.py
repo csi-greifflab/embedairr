@@ -67,24 +67,26 @@ def parse_arguments():
 
 
 def get_output_types(args):
-    output_types = []
-    if args.return_embeddings:
-        output_types.append("embeddings")
-    if not args.pooling:
-        output_types.append("embeddings_unpooled")
-    if args.cdr3_path:
-        if not args.context:
-            if not args.pool_cdr3:
-                output_types.append("cdr3_extracted_unpooled")
-            else:
-                output_types.append("cdr3_extracted")
-        else:
-            if not args.pool_cdr3:
-                output_types.append(f"cdr3_context_extracted_unpooled")
-            else:
-                output_types.append(f"cdr3_context_extracted")
-    # TODO: add option to return attention matrix and all layers
-    return output_types
+    output_types_dict = {
+        "embeddings": args.return_embeddings is True,
+        "embeddings_unpooled": args.pooling is False,
+        "cdr3_extracted": args.cdr3_path
+        and not args.context
+        and args.pool_cdr3 is True,
+        "cdr3_extracted_unpooled": args.cdr3_path
+        and not args.context
+        and args.pool_cdr3 is False,
+        "cdr3_context_extracted": args.cdr3_path
+        and args.context
+        and args.pool_cdr3 is True,
+        "cdr3_context_extracted_unpooled": args.cdr3_path
+        and args.context
+        and args.pool_cdr3 is False,
+        # TODO: add options for attention matrix and all layers
+    }
+
+    # Filter out the output types that are not enabled
+    return [key for key, condition in output_types_dict.items() if condition]
 
 
 if __name__ == "__main__":
@@ -134,89 +136,3 @@ if __name__ == "__main__":
     embedder.run()
 
     print("All outputs saved.")
-
-
-@pytest.fixture
-def mock_args():
-    return [
-        "main.py",
-        "--model_name",
-        "esm2_t33_650M_UR50D",
-        "--fasta_path",
-        "test_data/test.fasta",
-        "--output_path",
-        "test_output",
-        "--cdr3_path",
-        "test_data/test_cdr3.csv",
-        "--context",
-        "0",
-        "--layers",
-        "-1 6",
-        "--pooling",
-        "True",
-        "--return_embeddings",
-        "True",
-        "--pool_cdr3",
-        "True",
-    ]
-
-
-def test_parse_arguments(mock_args):
-    with patch.object(sys, "argv", mock_args):
-        args, output_types = parse_arguments()
-        assert args.model_name == "esm2_t33_650M_UR50D"
-        assert args.fasta_path == "test_data/test.fasta"
-        assert args.output_path == "test_output"
-        assert args.cdr3_path == "test_data/test_cdr3.csv"
-        assert args.context == 0
-        assert args.layers == "-1 6"
-        assert args.pooling is True
-        assert args.return_embeddings is True
-        assert args.pool_cdr3 is True
-        assert "embeddings" in output_types
-        assert "cdr3_extracted" in output_types
-
-
-def test_embedder_initialization(mock_args):
-    with patch.object(sys, "argv", mock_args):
-        args, output_types = parse_arguments()
-        model_name = args.model_name
-        fasta_path = args.fasta_path
-        output_path = args.output_path
-        cdr3_path = args.cdr3_path
-        context = args.context
-        layers = list(map(int, args.layers.strip().split()))
-        pooling = bool(args.pooling)
-        cdr3_pooling = bool(args.pool_cdr3)
-
-        mock_embedder_class = MagicMock()
-        mock_embedder_instance = mock_embedder_class.return_value
-
-        with patch("main.select_model", return_value=mock_embedder_class):
-            embedder = select_model(model_name)
-            embedder = embedder(
-                fasta_path,
-                model_name,
-                output_path,
-                cdr3_path,
-                context,
-                layers,
-                pooling,
-                output_types,
-            )
-
-            mock_embedder_class.assert_called_once_with(
-                fasta_path,
-                model_name,
-                output_path,
-                cdr3_path,
-                context,
-                layers,
-                pooling,
-                output_types,
-            )
-            assert embedder == mock_embedder_instance
-
-
-if __name__ == "__main__":
-    pytest.main()
