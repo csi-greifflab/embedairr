@@ -1,5 +1,11 @@
 import argparse
+import sys
 import os
+
+# Add the parent directory to the PYTHONPATH
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.insert(0, parent_dir)
 from embedairr.model_selecter import select_model
 
 
@@ -43,125 +49,73 @@ def parse_arguments():
     )
     parser.add_argument(
         "--extract_embeddings",
-        type=return_embeddings_type,
-        default=True,
-        nargs="?",
-        help="Set the embedding return type: True, False or 'unpooled'. Default is True.",
+        choices=["pooled", "unpooled", "false"],
+        default=["pooled"],
+        nargs="+",
+        help="Set the embedding return types. Choose one or more from: 'True', 'False', 'unpooled'. Default is 'True'.",
     )
     parser.add_argument(
         "--extract_cdr3_embeddings",
-        type=return_embeddings_type,
-        nargs="?",
-        default=True,
-        help="Set the embedding return type: True, False, or 'unpooled'. Requires --cdr3_path to be set. Default is True.",
+        choices=["pooled", "unpooled", "false"],
+        default=["pooled"],
+        nargs="+",
+        help="Set the CDR3 embedding return types. Choose one or more from: 'True', 'False', 'unpooled'. Requires --cdr3_path to be set. Default is 'True'.",
     )
     parser.add_argument(
         "--extract_attention_matrices",
-        type=return_attention_matrix_type,
-        nargs="?",
-        default="pooled",
-        help="Set the attention matrix return type: False, 'all_heads', 'average_layer' or 'average_all'. True returns = 'average_all'. Default is False.",
+        choices=["false", "all_heads", "average_layer", "average_all"],
+        default=["false"],
+        nargs="+",
+        help="Set the attention matrix return types. Choose one or more from: 'False', 'all_heads', 'average_layer', 'average_all'. Default is 'False'.",
     )
     parser.add_argument(
         "--extract_cdr3_attention_matrices",
-        type=return_attention_matrix_type,
-        nargs="?",
-        default="pooled",
-        help="Whether to pool the CDR3 extracted embeddings or not. Default is True.",
+        choices=["false", "all_heads", "average_layer", "average_all"],
+        default=["false"],
+        nargs="+",
+        help="Set the CDR3 attention matrix return types. Choose one or more from: 'False', 'all_heads', 'average_layer', 'average_all'. Requires --cdr3_path to be set. Default is 'False'.",
     )
     # TODO add argument for batch_size
     # TODO add experiment name
-    output_types = get_output_types(parser.parse_args())
-    return parser.parse_args(), output_types
-
-
-def return_embeddings_type(value):
-    if value.lower() in ("true", "false", "unpooled", ""):
-        if (
-            value.lower()
-            == "true" | value.lower()
-            == "t" | value.lower()
-            == "yes" | value.lower()
-            == "y" | value.lower()
-            == "1"
-        ):
-            return True
-        elif (
-            value.lower()
-            == "false" | value.lower()
-            == "f" | value.lower()
-            == "no" | value.lower()
-            == "n" | value.lower()
-            == "0"
-        ):
-            return False
-        elif value.lower() == "unpooled":
-            return "unpooled"
-        else:
-            return True  # Represents empty (default) case
-    raise argparse.ArgumentTypeError(
-        "Value must be empty, 'true', 'false', or 'unpooled'."
-    )
-
-
-def return_attention_matrix_type(value):
-    if value.lower() in ("true", "false", "pooled", "layer_pooled", "unpooled", ""):
-        if (
-            value.lower()
-            == "true" | value.lower()
-            == "t" | value.lower()
-            == "yes" | value.lower()
-            == "y" | value.lower()
-            == "1"
-        ):
-            return "pooled"
-        elif (
-            value.lower()
-            == "false" | value.lower()
-            == "f" | value.lower()
-            == "no" | value.lower()
-            == "n" | value.lower()
-            == "0"
-        ):
-            return False
-        elif value.lower() == "pooled":
-            return "pooled"
-        elif value.lower() == "layer_pooled":
-            return "layer_pooled"
-        elif value.lower() == "unpooled":
-            return "unpooled"
-        elif value.lower() == "":
-            return "pooled"
-        else:
-            return False  # Represents empty (default) case
-    raise argparse.ArgumentTypeError(
-        "Value must be empty, 'true', 'false', 'pooled' or 'layer_pooled'."
-    )
+    args = parser.parse_args()
+    output_types = get_output_types(args)
+    return args, output_types
 
 
 # When changes made here, also update base_embedder.py BaseEmbedder.extract_batch() method.
 def get_output_types(args):
-    output_types_dict = {
-        "embeddings": args.extract_embeddings is True,
-        "embeddings_unpooled": args.extract_embeddings is "unpooled",
-        "cdr3_extracted": args.extract_cdr3_embeddings is True and bool(args.cdr3_path),
-        "cdr3_extracted_unpooled": args.extract_cdr3_embeddings is "unpooled",
-        "attention_matrices_average_all": args.extract_attention_matrices is "pooled",
-        "attention_matrices_average_layer": args.extract_attention_matrices
-        is "layer_pooled",
-        "attention_matrices_all_heads": args.extract_attention_matrices is "unpooled",
-        "cdr3_attention_matrices_average_all": args.extract_attention_matrices
-        is "pooled"
-        and bool(args.cdr3_path),
-        "cdr3_attention_matrices_average_layer": args.extract_attention_matrices
-        is "layer_pooled"
-        and bool(args.cdr3_path),
-        "cdr3_attention_matrices_all_heads": args.extract_attention_matrices
-        is "unpooled"
-        and bool(args.cdr3_path),
-    }
-    # Filter out the output types that are not enabled
-    output_types = [key for key, condition in output_types_dict.items() if condition]
+    output_types = []
+
+    # Process embeddings options
+    if "pooled" in args.extract_embeddings:
+        output_types.append("embeddings")
+    if "unpooled" in args.extract_embeddings:
+        output_types.append("embeddings_unpooled")
+
+    # Process cdr3 embeddings options
+    if args.cdr3_path:
+        if "pooled" in args.extract_cdr3_embeddings:
+            output_types.append("cdr3_extracted")
+        if "unpooled" in args.extract_cdr3_embeddings:
+            output_types.append("cdr3_extracted_unpooled")
+
+    # Process attention matrices options
+    if "average_all" in args.extract_attention_matrices:
+        output_types.append("attention_matrices_average_all")
+    if "average_layer" in args.extract_attention_matrices:
+        output_types.append("attention_matrices_average_layer")
+    if "all_heads" in args.extract_attention_matrices:
+        output_types.append("attention_matrices_all_heads")
+
+    # Process cdr3 attention matrices options
+    if args.cdr3_path:
+        if "average_all" in args.extract_cdr3_attention_matrices:
+            output_types.append("cdr3_attention_matrices_average_all")
+        if "average_layer" in args.extract_cdr3_attention_matrices:
+            output_types.append("cdr3_attention_matrices_average_layer")
+        if "all_heads" in args.extract_cdr3_attention_matrices:
+            output_types.append("cdr3_attention_matrices_all_heads")
+
     return output_types
 
 
@@ -205,3 +159,19 @@ if __name__ == "__main__":
     embedder.run()
 
     print("All outputs saved.")
+
+# sys.argv = [
+#   "embedairr.py",
+#   "--model_name",
+#    "ab2",
+#    "--fasta_path",
+#    "/doctorai/userdata/airr_atlas/data/sequences/test_500.fa",
+#    "--output_path",
+#    "data/embeddings/test/",
+#    "--layers",
+#    "-1",
+#    "--extract_embeddings",
+#    "pooled",
+#    "--extract_attention_matrices",
+#    "average_all",
+# ]

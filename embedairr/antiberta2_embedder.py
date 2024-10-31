@@ -96,6 +96,96 @@ class Antiberta2Embedder(BaseEmbedder):
         data_loader = DataLoader(dataset, batch_size=batch_size)
         return data_loader
 
+    def extract_attention_matrices_all_heads(
+        self, out, representations, batch_labels, batch_sequences
+    ):
+        self.attention_matrices_all_heads = {
+            layer: {
+                self.attention_matrices[layer][head].extend(
+                    [
+                        out.attentions[layer][i, head, 1:-1, 1:-1].cpu()
+                        for i in range(len(batch_labels))
+                    ]
+                )
+                for head in range(self.num_heads)
+            }
+            for layer in self.layers
+        }
+
+    def extract_attention_matrices_average_layer(
+        self, out, representations, batch_labels, batch_sequences
+    ):
+        self.attention_matrices_average_layers = {
+            layer: self.attention_matrices_average_layers[layer].extend(
+                [
+                    out.attentions[layer][i, :, 1:-1, 1:-1].mean(0).cpu()
+                    for i in range(len(batch_labels))
+                ]
+            )
+            for layer in self.layers
+        }
+
+    def extract_attention_matrices_average_all(
+        self, out, representations, batch_labels, batch_sequences
+    ):
+        self.attention_matrices_average_all.extend(
+            [
+                torch.stack(
+                    [
+                        out.attentions[layer][i, :, 1:-1, 1:-1].mean(dim=0)
+                        for layer in range(len(out.attentions))
+                    ]
+                ).mean(dim=0)
+                for i in range(len(batch_labels))
+            ]
+        )
+
+    def extract_cdr3_attention_matrices_all_heads(
+        self, out, representations, batch_labels, batch_sequences
+    ):
+        for i, label in enumerate(batch_labels):
+            start, end = self.get_cdr3_positions(label)
+            self.cdr3_attention_matrices_all_heads = {
+                layer: {
+                    self.cdr3_attention_matrices_all_heads[layer][head].extend(
+                        [out.attentions[layer][i, head, start:end, start:end].cpu()]
+                    )
+                    for head in range(self.num_heads)
+                }
+                for layer in self.layers
+            }
+
+    def extract_cdr3_attention_matrices_average_layer(
+        self, out, representations, batch_labels, batch_sequences
+    ):
+        for i, label in enumerate(batch_labels):
+            start, end = self.get_cdr3_positions(label)
+            self.cdr3_attention_matrices_average_layers = {
+                layer: self.cdr3_attention_matrices_average_layers[layer].extend(
+                    [out.attentions[layer][i, :, start:end, start:end].mean(0).cpu()]
+                )
+                for layer in self.layers
+            }
+
+    def extract_cdr3_attention_matrices_average_all(
+        self, out, representations, batch_labels, batch_sequences
+    ):
+        for i, label in enumerate(batch_labels):
+            start, end = self.get_cdr3_positions(label)
+            self.cdr3_attention_matrices_average_all.extend(
+                [
+                    torch.stack(
+                        [
+                            out.attentions[layer][i, :, start:end, start:end].mean(
+                                dim=0
+                            )
+                            for layer in range(len(out.attentions))
+                        ]
+                    ).mean(dim=0)
+                    for i in range(len(batch_labels))
+                ]
+            )
+
     def embed(self):
         with torch.no_grad():
             for batch_idx, batch in enumerate(self.data_loader):
@@ -109,6 +199,7 @@ class Antiberta2Embedder(BaseEmbedder):
                     input_ids=input_ids,
                     attention_mask=attention_mask,
                     output_hidden_states=True,
+                    output_attentions=self.return_contacts,
                 )
                 representations = {
                     layer: outputs.hidden_states[layer].to(device="cpu")
@@ -116,8 +207,11 @@ class Antiberta2Embedder(BaseEmbedder):
                 }
                 self.sequence_labels.extend(labels)
                 self.extract_batch(
-                    representations,
+                    outputs,
                     representations,
                     labels,
+                )
+                print(
+                    f"{len(self.sequence_labels)} sequences of {len(self.sequences)} processed"
                 )
         print("Finished extracting embeddings")

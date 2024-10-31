@@ -71,19 +71,102 @@ class ESM2Embedder(BaseEmbedder):
         print(f"Read {self.fasta_path} with {len(dataset)} sequences")
         return data_loader
 
+    def extract_attention_matrices_all_heads(
+        self, out, representations, batch_labels, batch_sequences
+    ):
+        self.attention_matrices_all_heads = {
+            layer: {
+                self.attention_matrices[layer][head].extend(
+                    [
+                        out["attentions"][i, layer, head, 1:-1, 1:-1].cpu()
+                        for i in range(len(batch_labels))
+                    ]
+                )
+                for head in range(self.num_heads)
+            }
+            for layer in self.layers
+        }
+
+    def extract_attention_matrices_average_layer(
+        self, out, representations, batch_labels, batch_sequences
+    ):
+        self.attention_matrices_average_layers = {
+            layer: self.attention_matrices_average_layers[layer].extend(
+                [
+                    out["attentions"][i, layer, :, 1:-1, 1:-1].mean(0).cpu()
+                    for i in range(len(batch_labels))
+                ]
+            )
+            for layer in self.layers
+        }
+
+    def extract_attention_matrices_average_all(
+        self, out, representations, batch_labels, batch_sequences
+    ):
+        self.attention_matrices_average_all.extend(
+            [
+                out["attentions"][i, :, :, 1:-1, 1:-1].mean(dim=(0, 1)).cpu()
+                for i in range(len(batch_labels))
+            ]
+        )
+
+    def extract_cdr3_attention_matrices_all_heads(
+        self, out, representations, batch_labels, batch_sequences
+    ):
+        for i, label in enumerate(batch_labels):
+            start, end = self.get_cdr3_positions(label)
+            self.cdr3_attention_matrices_all_heads = {
+                layer: {
+                    self.cdr3_attention_matrices_all_heads[layer][head].extend(
+                        [out["attentions"][i, layer, head, start:end, start:end].cpu()]
+                    )
+                    for head in range(self.num_heads)
+                }
+                for layer in self.layers
+            }
+
+    def extract_cdr3_attention_matrices_average_layer(
+        self, out, representations, batch_labels, batch_sequences
+    ):
+        for i, label in enumerate(batch_labels):
+            start, end = self.get_cdr3_positions(label)
+            self.cdr3_attention_matrices_average_layers = {
+                layer: self.cdr3_attention_matrices_average_layers[layer].extend(
+                    [out["attentions"][i, layer, :, start:end, start:end].mean(0).cpu()]
+                )
+                for layer in self.layers
+            }
+
+    def extract_cdr3_attention_matrices_average_all(
+        self, out, representations, batch_labels, batch_sequences
+    ):
+        for i, label in enumerate(batch_labels):
+            start, end = self.get_cdr3_positions(label)
+            self.cdr3_attention_matrices_average_all.extend(
+                [
+                    out["attentions"][i, :, :, start:end, start:end]
+                    .mean(dim=(0, 1))
+                    .cpu()
+                ]
+            )
+
     def embed(self):
         with torch.no_grad():
             for labels, strs, toks in self.data_loader:
                 if self.device == torch.device("cuda"):
                     toks = toks.to(device="cuda", non_blocking=True)
-                out = self.model(
+                outputs = self.model(
                     toks, repr_layers=self.layers, return_contacts=self.return_contacts
                 )
                 # Extracting layer representations and moving them to CPU
                 representations = {
                     layer: t.to(device="cpu")
-                    for layer, t in out["representations"].items()
+                    for layer, t in outputs["representations"].items()
                 }
                 self.sequence_labels.extend(labels)
-                self.extract_batch(out, representations, labels, strs)
+                self.extract_batch(outputs, representations, labels, strs)
+                # print total progress
+                print(
+                    f"{len(self.sequence_labels)} sequences of {len(self.sequences)} processed"
+                )
         print("Finished extracting embeddings")

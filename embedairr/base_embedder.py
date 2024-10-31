@@ -33,7 +33,7 @@ class BaseEmbedder:
         for output_type in output_types:
             if "attention_matrix" in output_type:
                 self.return_contacts = True
-        self.extraction_methods = self.set_extraction_methods(output_types)
+        self.extraction_methods = self.set_extraction_methods()
 
     def set_output_objects(self):
         """Initialize output objects."""
@@ -211,83 +211,6 @@ class BaseEmbedder:
                 )
                 for layer in self.layers
             }
-
-    def extract_attention_matrices_all_heads(self, out, batch_labels, batch_sequences):
-        self.attention_matrices_all_heads = {
-            layer: {
-                self.attention_matrices[layer][head].extend(
-                    [
-                        out["attentions"][i, layer, head, 1:-1, 1:-1].cpu()
-                        for i in range(len(batch_labels))
-                    ]
-                )
-                for head in range(self.num_heads)
-            }
-            for layer in self.layers
-        }
-
-    def extract_attention_matrices_average_layer(
-        self, out, batch_labels, batch_sequences
-    ):
-        self.attention_matrices_average_layers = {
-            layer: self.attention_matrices_average_layers[layer].extend(
-                [
-                    out["attentions"][i, layer, :, 1:-1, 1:-1].mean(0).cpu()
-                    for i in range(len(batch_labels))
-                ]
-            )
-            for layer in self.layers
-        }
-
-    def extract_attention_matrices_average_all(
-        self, out, batch_labels, batch_sequences
-    ):
-        self.attention_matrices_average_all.extend(
-            [
-                out["attentions"][i, :, :, 1:-1, 1:-1].mean(dim=(0, 1)).cpu()
-                for i in range(len(batch_labels))
-            ]
-        )
-
-    def extract_cdr3_attention_matrices_all_heads(
-        self, out, batch_labels, batch_sequences
-    ):
-        for i, label in enumerate(batch_labels):
-            start, end = self.get_cdr3_positions(label)
-            self.cdr3_attention_matrices_all_heads = {
-                layer: {
-                    self.cdr3_attention_matrices_all_heads[layer][head].extend(
-                        [out["attentions"][i, layer, head, start:end, start:end].cpu()]
-                    )
-                    for head in range(self.num_heads)
-                }
-                for layer in self.layers
-            }
-
-    def extract_cdr3_attention_matrices_average_layer(
-        self, out, batch_labels, batch_sequences
-    ):
-        for i, label in enumerate(batch_labels):
-            start, end = self.get_cdr3_positions(label)
-            self.cdr3_attention_matrices_average_layers = {
-                layer: self.cdr3_attention_matrices_average_layers[layer].extend(
-                    [out["attentions"][i, layer, :, start:end, start:end].mean(0).cpu()]
-                )
-                for layer in self.layers
-            }
-
-    def extract_cdr3_attention_matrices_average_all(
-        self, out, batch_labels, batch_sequences
-    ):
-        for i, label in enumerate(batch_labels):
-            start, end = self.get_cdr3_positions(label)
-            self.cdr3_attention_matrices_average_all.extend(
-                [
-                    out["attentions"][i, :, :, start:end, start:end]
-                    .mean(dim=(0, 1))
-                    .cpu()
-                ]
-            )
 
     def export_to_disk(self):
         """Stack representations of each layer into a single tensor and save to output file."""
