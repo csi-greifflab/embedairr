@@ -13,7 +13,6 @@ class Antiberta2Embedder(BaseEmbedder):
         cdr3_path,
         context,
         layers,
-        pooling,
         output_types,
     ):
         super().__init__(
@@ -23,19 +22,19 @@ class Antiberta2Embedder(BaseEmbedder):
             cdr3_path,
             context,
             layers,
-            pooling,
             output_types,
         )
         self.sequences = self.fasta_to_dict(fasta_path, gaps=True)
-        self.model, self.tokenizer = self.initialize_model("alchemab/antiberta2-cssp")
-        self.batch_size = 30000
-        self.max_length = 200
+        self.model, self.tokenizer, self.num_heads = self.initialize_model(
+            "alchemab/antiberta2-cssp"
+        )
         self.layers = self.load_layers(layers)
         self.data_loader = self.load_data(self.max_length, self.batch_size)
         self.sequences = {
             sequence_id: sequence_aa.replace(" ", "")
             for sequence_id, sequence_aa in self.sequences.items()
         }
+        self.set_output_objects()
 
     def initialize_model(self, model_name="alchemab/antiberta2-cssp"):
         """Initialize the model, tokenizer, and device."""
@@ -43,7 +42,8 @@ class Antiberta2Embedder(BaseEmbedder):
         tokenizer = RoFormerTokenizer.from_pretrained(model_name)
         model = RoFormerModel.from_pretrained(model_name).to(device)
         model.eval()
-        return model, tokenizer
+        num_heads = model.encoder.layer[0].attention.self.num_attention_heads
+        return model, tokenizer, num_heads
 
     def load_layers(self, layers):
         """Check if the specified representation layers are valid."""

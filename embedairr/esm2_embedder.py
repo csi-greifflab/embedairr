@@ -12,7 +12,6 @@ class ESM2Embedder(BaseEmbedder):
         cdr3_path,
         context,
         layers,
-        pooling,
         output_types,
     ):
         super().__init__(
@@ -22,26 +21,29 @@ class ESM2Embedder(BaseEmbedder):
             cdr3_path,
             context,
             layers,
-            pooling,
             output_types,
         )
+
         self.sequences = self.fasta_to_dict(fasta_path)
-        self.model, self.alphabet = self.initialize_model()
+        self.model, self.alphabet, self.num_heads = self.initialize_model()
         self.layers = self.load_layers(layers)
         self.data_loader = self.load_data()
+        self.set_output_objects()
 
     def initialize_model(self, model_name="esm2_t33_650M_UR50D"):
         """Initialize the model, tokenizer"""
         #  Loading the pretrained model and alphabet for tokenization
         print("Loading model...")
-        model, alphabet = pretrained.load_model_and_alphabet(model_name)
+        # model, alphabet = pretrained.load_model_and_alphabet(model_name)
+        model, alphabet = pretrained.esm2_t33_650M_UR50D()
         model.eval()  # Setting the model to evaluation mode
+        num_heads = model.layers[0].self_attn.num_heads
 
         # Moving the model to GPU if available for faster processing
         if torch.cuda.is_available():
             model = model.cuda()
             print("Transferred model to GPU")
-        return model, alphabet
+        return model, alphabet, num_heads
 
     def load_layers(self, layers):
         # Checking if the specified representation layers are valid
@@ -74,12 +76,14 @@ class ESM2Embedder(BaseEmbedder):
             for labels, strs, toks in self.data_loader:
                 if self.device == torch.device("cuda"):
                     toks = toks.to(device="cuda", non_blocking=True)
-                out = self.model(toks, repr_layers=self.layers, return_contacts=False)
+                out = self.model(
+                    toks, repr_layers=self.layers, return_contacts=self.return_contacts
+                )
                 # Extracting layer representations and moving them to CPU
                 representations = {
                     layer: t.to(device="cpu")
                     for layer, t in out["representations"].items()
                 }
                 self.sequence_labels.extend(labels)
-                self.extract_batch(representations, labels, strs)
+                self.extract_batch(out, representations, labels, strs)
         print("Finished extracting embeddings")
