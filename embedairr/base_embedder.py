@@ -4,36 +4,25 @@ import torch
 
 
 class BaseEmbedder:
-    def __init__(
-        self,
-        fasta_path,
-        model_name,
-        output_path,
-        cdr3_path,
-        context,
-        layers,
-        output_types,
-    ):
-        self.fasta_path = fasta_path
-        self.model_name = model_name
-        self.output_path = output_path
-        self.cdr3_path = cdr3_path
-        self.context = context
-        self.layers = layers
-        self.output_types = output_types
-        self.cdr3_dict = self.load_cdr3(cdr3_path)
+    def __init__(self, args):
+        self.fasta_path = args.fasta_path
+        self.model_name = args.model_name
+        self.output_path = args.output_path
+        self.cdr3_path = args.cdr3_path
+        self.context = args.context
+        self.layers = list(map(int, args.layers.split()))
+        self.cdr3_dict = self.load_cdr3(args.cdr3_path)
         self.batch_size = 30000  # TODO make this an argument
         self.max_length = 200  # TODO make this an argument
         if torch.cuda.is_available():
             self.device = torch.device("cuda")
         else:
             self.device = torch.device("cpu")
-
+        self.output_types, self.extraction_methods = self.get_output_types(args)
         self.return_contacts = False
-        for output_type in output_types:
-            if "attention_matrix" in output_type:
+        for output_type in self.output_types:
+            if "attention" in output_type:
                 self.return_contacts = True
-        self.extraction_methods = self.set_extraction_methods()
 
     def set_output_objects(self):
         """Initialize output objects."""
@@ -45,39 +34,74 @@ class BaseEmbedder:
         self.cdr3_context_extracted = {layer: [] for layer in self.layers}
         self.cdr3_context_extracted_unpooled = {layer: [] for layer in self.layers}
         self.attention_matrices_all_heads = {
-            layer: {head: [] for head in range(self.num_heads)} for layer in self.layers
+            layer: {head: [] for head in range(self.num_heads)}
+            for layer in range(1, self.num_layers + 1)
         }
-        self.attention_matrices_average_layers = {layer: [] for layer in self.layers}
+        self.attention_matrices_average_layers = {
+            layer: [] for layer in range(1, self.num_layers + 1)
+        }
         self.attention_matrices_average_all = []
         self.cdr3_attention_matrices_all_heads = {
-            layer: {head: [] for head in range(self.num_heads)} for layer in self.layers
+            layer: {head: [] for head in range(self.num_heads)}
+            for layer in range(1, self.num_layers + 1)
         }
         self.cdr3_attention_matrices_average_layers = {
-            layer: [] for layer in self.layers
+            layer: [] for layer in range(1, self.num_layers + 1)
         }
         self.cdr3_attention_matrices_average_all = []
 
-    def set_extraction_methods(self):
+    # When changes made here, also update base_embedder.py BaseEmbedder.extract_batch() method.
+    def get_output_types(self, args):
+        output_types = []
         extraction_methods_list = []
+
+        options_mapping = {
+            "pooled": ["embeddings", "cdr3_extracted"],
+            "unpooled": ["embeddings_unpooled", "cdr3_extracted_unpooled"],
+            "average_all": [
+                "attention_matrices_average_all",
+                "cdr3_attention_matrices_average_all",
+            ],
+            "average_layer": [
+                "attention_matrices_average_layers",
+                "cdr3_attention_matrices_average_layers",
+            ],
+            "all_heads": [
+                "attention_matrices_all_heads",
+                "cdr3_attention_matrices_all_heads",
+            ],
+        }
+
+        for option, types in options_mapping.items():
+            if option in args.extract_embeddings:
+                output_types.append(types[0])
+            if args.cdr3_path and option in args.extract_cdr3_embeddings:
+                output_types.append(types[1])
+            if option in args.extract_attention_matrices:
+                output_types.append(types[0])
+            if args.cdr3_path and option in args.extract_cdr3_attention_matrices:
+                output_types.append(types[1])
+
         extraction_methods = {
             "embeddings": self.extract_embeddings,
             "embeddings_unpooled": self.extract_embeddings_unpooled,
             "cdr3_extracted": self.extract_cdr3,
             "cdr3_extracted_unpooled": self.extract_cdr3_unpooled,
             "attention_matrices_all_heads": self.extract_attention_matrices_all_heads,
-            "attention_matrices_average_layer": self.extract_attention_matrices_average_layer,
+            "attention_matrices_average_layers": self.extract_attention_matrices_average_layer,
             "attention_matrices_average_all": self.extract_attention_matrices_average_all,
             "cdr3_attention_matrices_all_heads": self.extract_cdr3_attention_matrices_all_heads,
-            "cdr3_attention_matrices_average_layer": self.extract_cdr3_attention_matrices_average_layer,
+            "cdr3_attention_matrices_average_layers": self.extract_cdr3_attention_matrices_average_layer,
             "cdr3_attention_matrices_average_all": self.extract_cdr3_attention_matrices_average_all,
         }
-        for output_type in self.output_types:
+        for output_type in output_types:
             # if output_type contains attention_matrix, call attention_matrix extraction method
             if output_type in extraction_methods:
                 extraction_methods_list.append(extraction_methods[output_type])
             else:
                 raise ValueError(f"Output type {output_type} not supported")
-        return extraction_methods_list
+
+        return output_types, extraction_methods_list
 
     def fasta_to_dict(self, fasta_path, gaps=False):
         """Convert FASTA file into a dictionary."""
@@ -168,8 +192,9 @@ class BaseEmbedder:
 
     def extract_embeddings(self, out, representations, batch_labels, batch_sequences):
         self.embeddings = {
-            layer: self.embeddings[layer].extend(
-                [
+            layer: (
+                self.embeddings[layer]
+                + [
                     representations[layer][i, 1 : len(batch_sequences[i]) + 1].mean(0)
                     for i in range(len(batch_labels))
                 ]
@@ -181,8 +206,9 @@ class BaseEmbedder:
         self, out, representations, batch_labels, batch_sequences
     ):
         self.embeddings_unpooled = {
-            layer: self.embeddings_unpooled[layer].extend(
-                [
+            layer: (
+                self.embeddings_unpooled[layer]
+                + [
                     representations[layer][i, 1 : len(batch_sequences[i]) + 1]
                     for i in range(len(batch_labels))
                 ]
@@ -194,8 +220,9 @@ class BaseEmbedder:
         for i, label in enumerate(batch_labels):
             start, end = self.get_cdr3_positions(label, context=self.context)
             self.cdr3_context_extracted = {
-                layer: self.cdr3_context_extracted[layer].extend(
-                    [representations[layer][i, start : end + 1].mean(0)]
+                layer: (
+                    self.cdr3_context_extracted[layer]
+                    + [representations[layer][i, start : end + 1].mean(0)]
                 )
                 for layer in self.layers
             }
@@ -206,8 +233,9 @@ class BaseEmbedder:
         for i, label in enumerate(batch_labels):
             start, end = self.get_cdr3_positions(label, context=self.context)
             self.cdr3_context_extracted_unpooled = {
-                layer: self.cdr3_context_extracted_unpooled[layer].extend(
-                    [representations[layer][i, start : end + 1]]
+                layer: (
+                    self.cdr3_context_extracted_unpooled[layer]
+                    + [representations[layer][i, start : end + 1]]
                 )
                 for layer in self.layers
             }
@@ -262,11 +290,11 @@ class BaseEmbedder:
                             self.output_path,
                             self.model_name,
                             output_type,
-                            f"{output_name}_{self.model_name}_{output_type}_layer_{layer}_head_{head}.pt",
+                            f"{output_name}_{self.model_name}_{output_type}_layer_{layer}_head_{head + 1}.pt",
                         )
                         torch.save(getattr(self, output_type)[layer][head], output_file)
                         print(
-                            f"Saved {output_type} representation for layer {layer} head {head} to {output_file}"
+                            f"Saved {output_type} representation for layer {layer} head {head + 1} to {output_file}"
                         )
 
     def export_sequence_indices(self):

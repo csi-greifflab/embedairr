@@ -78,100 +78,24 @@ def parse_arguments():
     # TODO add argument for batch_size
     # TODO add experiment name
     args = parser.parse_args()
-    output_types = get_output_types(args)
-    return args, output_types
-
-
-# When changes made here, also update base_embedder.py BaseEmbedder.extract_batch() method.
-def get_output_types(args):
-    output_types = []
-
-    # Process embeddings options
-    if "pooled" in args.extract_embeddings:
-        output_types.append("embeddings")
-    if "unpooled" in args.extract_embeddings:
-        output_types.append("embeddings_unpooled")
-
-    # Process cdr3 embeddings options
-    if args.cdr3_path:
-        if "pooled" in args.extract_cdr3_embeddings:
-            output_types.append("cdr3_extracted")
-        if "unpooled" in args.extract_cdr3_embeddings:
-            output_types.append("cdr3_extracted_unpooled")
-
-    # Process attention matrices options
-    if "average_all" in args.extract_attention_matrices:
-        output_types.append("attention_matrices_average_all")
-    if "average_layer" in args.extract_attention_matrices:
-        output_types.append("attention_matrices_average_layer")
-    if "all_heads" in args.extract_attention_matrices:
-        output_types.append("attention_matrices_all_heads")
-
-    # Process cdr3 attention matrices options
-    if args.cdr3_path:
-        if "average_all" in args.extract_cdr3_attention_matrices:
-            output_types.append("cdr3_attention_matrices_average_all")
-        if "average_layer" in args.extract_cdr3_attention_matrices:
-            output_types.append("cdr3_attention_matrices_average_layer")
-        if "all_heads" in args.extract_cdr3_attention_matrices:
-            output_types.append("cdr3_attention_matrices_all_heads")
-
-    return output_types
+    return args
 
 
 if __name__ == "__main__":
     # Parse and store arguments
-    args, output_types = parse_arguments()
-    model_name = args.model_name
-    fasta_path = args.fasta_path
-    output_path = args.output_path
-    cdr3_path = args.cdr3_path
-    context = args.context
+    args = parse_arguments()
     layers = list(map(int, args.layers.strip().split()))
 
-    print("Arguments parsed successfully")
-    # Print summary of arguments
-    print(f"FASTA file: {fasta_path}")
-    print(f"Output file: {output_path}")
-    print(f"CDR3 file: {cdr3_path}")
-    print(f"Context: {context}")
-    print(f"Layers: {layers}")
-    print(f"Output types: {output_types}\n")
-
     # Check if output directory exists and creates it if it's missing
-    if not os.path.exists(output_path):
-        os.makedirs(output_path)
+    if not os.path.exists(args.output_path):
+        os.makedirs(args.output_path)
 
-    embedder = select_model(model_name)
+    embedder = select_model(args.model_name)
 
-    embedder = embedder(
-        fasta_path,
-        model_name,
-        output_path,
-        cdr3_path,
-        context,
-        layers,
-        output_types,
-    )
+    embedder = embedder(args)
 
     print("Embedder initialized")
 
     embedder.run()
 
     print("All outputs saved.")
-
-# sys.argv = [
-#   "embedairr.py",
-#   "--model_name",
-#    "ab2",
-#    "--fasta_path",
-#    "/doctorai/userdata/airr_atlas/data/sequences/test_500.fa",
-#    "--output_path",
-#    "data/embeddings/test/",
-#    "--layers",
-#    "-1",
-#    "--extract_embeddings",
-#    "pooled",
-#    "--extract_attention_matrices",
-#    "average_all",
-# ]

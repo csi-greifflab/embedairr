@@ -4,29 +4,14 @@ from embedairr.base_embedder import BaseEmbedder
 
 
 class ESM2Embedder(BaseEmbedder):
-    def __init__(
-        self,
-        fasta_path,
-        model_name,
-        output_path,
-        cdr3_path,
-        context,
-        layers,
-        output_types,
-    ):
-        super().__init__(
-            fasta_path,
-            model_name,
-            output_path,
-            cdr3_path,
-            context,
-            layers,
-            output_types,
-        )
+    def __init__(self, args):
+        super().__init__(args)
 
-        self.sequences = self.fasta_to_dict(fasta_path)
-        self.model, self.alphabet, self.num_heads = self.initialize_model()
-        self.layers = self.load_layers(layers)
+        self.sequences = self.fasta_to_dict(args.fasta_path)
+        self.model, self.alphabet, self.num_heads, self.num_layers = (
+            self.initialize_model()
+        )
+        self.layers = self.load_layers(self.layers)
         self.data_loader = self.load_data()
         self.set_output_objects()
 
@@ -38,12 +23,13 @@ class ESM2Embedder(BaseEmbedder):
         model, alphabet = pretrained.esm2_t33_650M_UR50D()
         model.eval()  # Setting the model to evaluation mode
         num_heads = model.layers[0].self_attn.num_heads
+        num_layers = len(model.layers)
 
         # Moving the model to GPU if available for faster processing
         if torch.cuda.is_available():
             model = model.cuda()
             print("Transferred model to GPU")
-        return model, alphabet, num_heads
+        return model, alphabet, num_heads, num_layers
 
     def load_layers(self, layers):
         # Checking if the specified representation layers are valid
@@ -76,35 +62,38 @@ class ESM2Embedder(BaseEmbedder):
     ):
         self.attention_matrices_all_heads = {
             layer: {
-                self.attention_matrices[layer][head].extend(
-                    [
-                        out["attentions"][i, layer, head, 1:-1, 1:-1].cpu()
+                head: (
+                    self.attention_matrices_all_heads[layer][head]
+                    + [
+                        out["attentions"][i, layer - 1, head, 1:-1, 1:-1].cpu()
                         for i in range(len(batch_labels))
                     ]
                 )
                 for head in range(self.num_heads)
             }
-            for layer in self.layers
+            for layer in range(1, self.num_layers + 1)
         }
 
     def extract_attention_matrices_average_layer(
         self, out, representations, batch_labels, batch_sequences
     ):
         self.attention_matrices_average_layers = {
-            layer: self.attention_matrices_average_layers[layer].extend(
-                [
-                    out["attentions"][i, layer, :, 1:-1, 1:-1].mean(0).cpu()
+            layer: (
+                self.attention_matrices_average_layers[layer]
+                + [
+                    out["attentions"][i, layer - 1, :, 1:-1, 1:-1].mean(0).cpu()
                     for i in range(len(batch_labels))
                 ]
             )
-            for layer in self.layers
+            for layer in range(1, self.num_layers + 1)
         }
 
     def extract_attention_matrices_average_all(
         self, out, representations, batch_labels, batch_sequences
     ):
-        self.attention_matrices_average_all.extend(
-            [
+        (
+            self.attention_matrices_average_all
+            + [
                 out["attentions"][i, :, :, 1:-1, 1:-1].mean(dim=(0, 1)).cpu()
                 for i in range(len(batch_labels))
             ]
@@ -117,12 +106,17 @@ class ESM2Embedder(BaseEmbedder):
             start, end = self.get_cdr3_positions(label)
             self.cdr3_attention_matrices_all_heads = {
                 layer: {
-                    self.cdr3_attention_matrices_all_heads[layer][head].extend(
-                        [out["attentions"][i, layer, head, start:end, start:end].cpu()]
+                    head: (
+                        self.cdr3_attention_matrices_all_heads[layer][head]
+                        + [
+                            out["attentions"][
+                                i, layer - 1, head, start:end, start:end
+                            ].cpu()
+                        ]
                     )
                     for head in range(self.num_heads)
                 }
-                for layer in self.layers
+                for layer in range(1, self.num_layers + 1)
             }
 
     def extract_cdr3_attention_matrices_average_layer(
@@ -131,10 +125,15 @@ class ESM2Embedder(BaseEmbedder):
         for i, label in enumerate(batch_labels):
             start, end = self.get_cdr3_positions(label)
             self.cdr3_attention_matrices_average_layers = {
-                layer: self.cdr3_attention_matrices_average_layers[layer].extend(
-                    [out["attentions"][i, layer, :, start:end, start:end].mean(0).cpu()]
+                layer: (
+                    self.cdr3_attention_matrices_average_layers[layer]
+                    + [
+                        out["attentions"][i, layer - 1, :, start:end, start:end]
+                        .mean(0)
+                        .cpu()
+                    ]
                 )
-                for layer in self.layers
+                for layer in range(1, self.num_layers + 1)
             }
 
     def extract_cdr3_attention_matrices_average_all(
@@ -142,8 +141,9 @@ class ESM2Embedder(BaseEmbedder):
     ):
         for i, label in enumerate(batch_labels):
             start, end = self.get_cdr3_positions(label)
-            self.cdr3_attention_matrices_average_all.extend(
-                [
+            (
+                self.cdr3_attention_maembedder.attention_matrices_all_headstrices_average_all
+                + [
                     out["attentions"][i, :, :, start:end, start:end]
                     .mean(dim=(0, 1))
                     .cpu()
