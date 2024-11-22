@@ -29,6 +29,8 @@ class ESM2Embedder(BaseEmbedder):
         if torch.cuda.is_available():
             model = model.cuda()
             print("Transferred model to GPU")
+        else:
+            print("No GPU available, using CPU")
         return model, alphabet, num_heads, num_layers
 
     def load_layers(self, layers):
@@ -42,12 +44,12 @@ class ESM2Embedder(BaseEmbedder):
         ]
         return layers
 
-    def load_data(self, batch_size=30000):
+    def load_data(self):
         print("Loading and batching input sequences...")
         # Creating a dataset from the input fasta file
         dataset = FastaBatchedDataset.from_file(self.fasta_path)
         # Generating batch indices based on token count
-        batches = dataset.get_batch_indices(batch_size, extra_toks_per_seq=1)
+        batches = dataset.get_batch_indices(self.batch_size, extra_toks_per_seq=1)
         # DataLoader to iterate through batches efficiently
         data_loader = torch.utils.data.DataLoader(
             dataset,

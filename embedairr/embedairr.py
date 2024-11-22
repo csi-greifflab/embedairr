@@ -75,7 +75,13 @@ def parse_arguments():
         nargs="+",
         help="Set the CDR3 attention matrix return types. Choose one or more from: 'False', 'all_heads', 'average_layer', 'average_all'. Requires --cdr3_path to be set. Default is 'False'.",
     )
-    # TODO add argument for batch_size
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=1024,
+        help="Batch size for loading sequences. Default is 1024.",
+    )
+
     # TODO add experiment name
     args = parser.parse_args()
     return args
@@ -84,7 +90,6 @@ def parse_arguments():
 if __name__ == "__main__":
     # Parse and store arguments
     args = parse_arguments()
-    layers = list(map(int, args.layers.strip().split()))
 
     # Check if output directory exists and creates it if it's missing
     if not os.path.exists(args.output_path):
