@@ -1,7 +1,10 @@
 import os
 import csv
 import torch
-
+import sys
+import gc
+from itertools import islice
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"]="false"
 
 class BaseEmbedder:
     def __init__(self, args):
@@ -12,6 +15,7 @@ class BaseEmbedder:
         self.context = args.context
         self.layers = list(map(int, args.layers.split()))
         self.cdr3_dict = self.load_cdr3(args.cdr3_path)
+
         self.batch_size = args.batch_size
         self.max_length = 200  # TODO make this an argument
         if torch.cuda.is_available():
@@ -24,6 +28,7 @@ class BaseEmbedder:
         for output_type in self.output_types:
             if "attention" in output_type:
                 self.return_contacts = True
+        self.flatten = True
 
     def set_output_objects(self):
         """Initialize output objects."""
@@ -147,6 +152,9 @@ class BaseEmbedder:
             with open(cdr3_path) as f:
                 reader = csv.reader(f)
                 cdr3_dict = {rows[0]: rows[1] for rows in reader}
+                for i, (key, value) in enumerate(cdr3_dict.items()):
+                    if i < 5:
+                        print(f"{key} : {value}   cdr3 dict")
             return cdr3_dict
         else:
             return None
@@ -178,13 +186,13 @@ class BaseEmbedder:
             cdr3_sequence = self.cdr3_dict[label]
         except KeyError:
             SystemExit(f"No cdr3 sequence found for {label}")
-
         # remove '-' from cdr3_sequence
         cdr3_sequence = cdr3_sequence.replace("-", "")
 
         # get position of cdr3_sequence in sequence
         start = max(full_sequence.find(cdr3_sequence) - context, 0)
         end = min(start + len(cdr3_sequence) + context, len(full_sequence))
+
         return start, end
 
     def extract_batch(self, out, representations, batch_labels, batch_sequences):
@@ -220,9 +228,9 @@ class BaseEmbedder:
     def extract_cdr3(self, out, representations, batch_labels, batch_sequences):
         for i, label in enumerate(batch_labels):
             start, end = self.get_cdr3_positions(label, context=self.context)
-            self.cdr3_context_extracted = {
+            self.cdr3_extracted = {
                 layer: (
-                    self.cdr3_context_extracted[layer]
+                    self.cdr3_extracted[layer]
                     + [representations[layer][i, start : end + 1].mean(0)]
                 )
                 for layer in self.layers
@@ -233,13 +241,14 @@ class BaseEmbedder:
     ):
         for i, label in enumerate(batch_labels):
             start, end = self.get_cdr3_positions(label, context=self.context)
-            self.cdr3_context_extracted_unpooled = {
+            self.cdr3_extracted_unpooled = {
                 layer: (
-                    self.cdr3_context_extracted_unpooled[layer]
+                    self.cdr3_extracted_unpooled[layer]
                     + [representations[layer][i, start : end + 1]]
                 )
                 for layer in self.layers
             }
+        # print(f" cdr3 tensor {self.cdr3_extracted_unpooled[1].shape}")
 
     def export_to_disk(self):
         """Stack representations of each layer into a single tensor and save to output file."""
@@ -259,7 +268,10 @@ class BaseEmbedder:
                         getattr(self, output_type)[layer] = torch.vstack(
                             getattr(self, output_type)[layer]
                         )
-                    torch.save(getattr(self, output_type)[layer], output_file_layer)
+                    if self.flatten and "unpooled" in output_type:
+                        torch.save(torch.stack(getattr(self, output_type)[layer],dim=0).flatten(start_dim=1), output_file_layer)
+                    else:
+                        torch.save((getattr(self, output_type)[layer]), output_file_layer)
                     print(
                         f"Saved {output_type} representation for layer {layer} to {output_file_layer}"
                     )
@@ -270,7 +282,10 @@ class BaseEmbedder:
                     output_type,
                     f"{output_name}_{self.model_name}_{output_type}.pt",
                 )
-                torch.save(getattr(self, output_type), output_file)
+                if self.flatten:
+                    torch.save(torch.stack( getattr(self, output_type), dim=0).flatten(start_dim=1), output_file)
+                else:
+                    torch.save(torch.stack( getattr(self, output_type), dim=0), output_file)
                 print(f"Saved {output_type} representation to {output_file}")
             elif "average_layer" in output_type:
                 for layer in self.layers:
@@ -280,7 +295,10 @@ class BaseEmbedder:
                         output_type,
                         f"{output_name}_{self.model_name}_{output_type}_layer_{layer}.pt",
                     )
-                    torch.save(getattr(self, output_type)[layer], output_file)
+                    if self.flatten:
+                        torch.save(torch.stack(getattr(self, output_type)[layer], dim=0).flatten(start_dim=1), output_file)
+                    else:
+                        torch.save(torch.stack(getattr(self, output_type)[layer]), output_file)
                     print(
                         f"Saved {output_type} representation for layer {layer} to {output_file}"
                     )
@@ -293,10 +311,14 @@ class BaseEmbedder:
                             output_type,
                             f"{output_name}_{self.model_name}_{output_type}_layer_{layer}_head_{head + 1}.pt",
                         )
-                        torch.save(getattr(self, output_type)[layer][head], output_file)
+                        if self.flatten:
+                            torch.save( torch.stack( getattr(self, output_type)[layer][head], dim=0).flatten(start_dim=1), output_file)
+                        else:
+                            torch.save( torch.stack( getattr(self, output_type)[layer][head]), output_file)
                         print(
                             f"Saved {output_type} representation for layer {layer} head {head + 1} to {output_file}"
                         )
+    
 
     def export_sequence_indices(self):
         """Save sequence indices to a CSV file."""
@@ -316,6 +338,9 @@ class BaseEmbedder:
             if not os.path.exists(output_type_path):
                 os.makedirs(output_type_path)
 
+
+
+
     def run(self):
         self.create_output_dirs()
         print("Created output directories")
@@ -323,7 +348,7 @@ class BaseEmbedder:
         print("Start embedding extraction")
         self.embed()
         print("Finished embedding extraction")
-
+        
         print("Saving embeddings...")
         self.export_to_disk()
 
