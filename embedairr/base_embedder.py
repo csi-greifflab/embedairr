@@ -15,7 +15,7 @@ class BaseEmbedder:
         self.context = args.context
         self.layers = list(map(int, args.layers.split()))
         self.cdr3_dict = self.load_cdr3(args.cdr3_path)
-        self.batch_size = 50  # TODO make this an argument
+        self.batch_size = args.batch_size  # TODO make this an argument
         self.max_length = 200  # TODO make this an argument
         if torch.cuda.is_available():
             self.device = torch.device("cuda")
@@ -27,7 +27,6 @@ class BaseEmbedder:
         for output_type in self.output_types:
             if "attention" in output_type:
                 self.return_contacts = True
-        self.gino = 1
         self.flatten = True
 
     def set_output_objects(self):
@@ -182,12 +181,8 @@ class BaseEmbedder:
     def get_cdr3_positions(self, label, context=0):
         """Get the start and end positions of the CDR3 sequence in the full sequence."""
         full_sequence = self.sequences[label]
-        # print('full_sequence', full_sequence)
-        # print('label', label)
-        # print(self.cdr3_dict[label])
         try:
             cdr3_sequence = self.cdr3_dict[label]
-            # print('yess')
         except KeyError:
             SystemExit(f"No cdr3 sequence found for {label}")
         # remove '-' from cdr3_sequence

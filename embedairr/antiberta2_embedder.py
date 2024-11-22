@@ -220,27 +220,7 @@ class Antiberta2Embedder(BaseEmbedder):
                     f"Processed {len(self.sequence_labels)} out of {len(self.sequences)} sequences"
                 , end="\r")
                 
-
                 gc.collect()
-                # print(f"Memory footprint :{self.print_memory_footprint()}")
         print("Finished extracting embeddings")
 
 
-def write_batch(self, outputs, representations, batch_idx):
-    if self.extract_embeddings:
-        for layer, tensor in representations.items():
-            torch.save(
-                tensor,
-                f"{self.output_dir}/cache/embeddings_{layer}_batch{batch_idx}.pt",
-            )
-    if self.extract_attention_matrices:
-        for layer, matrices in self.attention_matrices_average_layers.items():
-            torch.save(
-                torch.save(matrices),
-                f"{self.output_dir}/cache/attention_matrices_{layer}_batch{batch_idx}.pt",
-            )
-        # if self.extract_cdr3_attention_matrices:
-        #     output["cdr3_attention_matrices"] = {
-        #         layer: matrix[i].detach().numpy().tolist()
-        #         for layer, matrix in self.cdr3_attention_matrices.items()
-        #     }
