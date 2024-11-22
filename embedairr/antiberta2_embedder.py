@@ -1,8 +1,12 @@
 import torch
+import gc
 from transformers import RoFormerTokenizer, RoFormerModel
 from torch.utils.data import DataLoader, TensorDataset
 from embedairr.base_embedder import BaseEmbedder
-
+import time
+import os
+# torch.set_default_dtype(torch.float16)
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"]="false"
 
 class Antiberta2Embedder(BaseEmbedder):
     def __init__(self, args):
@@ -22,6 +26,8 @@ class Antiberta2Embedder(BaseEmbedder):
     def initialize_model(self, model_name="alchemab/antiberta2-cssp"):
         """Initialize the model, tokenizer, and device."""
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # print device type
+        print(f"Device type: {device}")
         tokenizer = RoFormerTokenizer.from_pretrained(model_name)
         model = RoFormerModel.from_pretrained(model_name).to(device)
         model.eval()
@@ -72,7 +78,6 @@ class Antiberta2Embedder(BaseEmbedder):
                     != int(((counter) / total_sequences) * 100 / 2)
                 ):
                     print(f"Progress: {percent_complete:.2f}%", end="\r")
-
         # Convert lists to tensors and create a dataset
         input_ids = torch.cat(input_ids, dim=0)
         attention_masks = torch.cat(attention_masks, dim=0)
@@ -88,7 +93,7 @@ class Antiberta2Embedder(BaseEmbedder):
                 head: (
                     self.attention_matrices_all_heads[layer][head]
                     + [
-                        out.attentions[layer - 1][i, head, 1:-1, 1:-1].cpu()
+                        out.attentions[layer - 1][i, head, 1:-1, 1:-1].cpu().to( dtype=torch.float16)
                         for i in range(len(batch_labels))
                     ]
                 )
@@ -106,7 +111,7 @@ class Antiberta2Embedder(BaseEmbedder):
                 + [
                     out.attentions[layer - 1][i, :, 1:-1, 1:-1]
                     .mean(0)
-                    .cpu()  # average over heads
+                    .to(device="cpu", dtype=torch.float16)  # average over heads
                     for i in range(len(batch_labels))
                 ]
             )
@@ -121,7 +126,7 @@ class Antiberta2Embedder(BaseEmbedder):
                 [
                     out.attentions[layer][i, :, 1:-1, 1:-1].mean(
                         dim=0
-                    )  # average over heads
+                    ).to( dtype=torch.float16)  # average over heads
                     for layer in range(self.num_layers)
                 ]
             ).mean(
@@ -142,7 +147,7 @@ class Antiberta2Embedder(BaseEmbedder):
                         + [
                             out.attentions[layer - 1][
                                 i, head, start:end, start:end
-                            ].cpu()
+                            ].cpu().to( dtype=torch.float16)
                         ]
                     )
                     for head in range(self.num_heads)
@@ -161,7 +166,7 @@ class Antiberta2Embedder(BaseEmbedder):
                     + [
                         out.attentions[layer - 1][i, :, start:end, start:end]
                         .mean(0)
-                        .cpu()
+                        .cpu().to( dtype=torch.float16)
                     ]
                 )
                 for layer in range(1, self.num_layers + 1)
@@ -175,16 +180,20 @@ class Antiberta2Embedder(BaseEmbedder):
             self.cdr3_attention_matrices_average_all + [
                 torch.stack(
                     [
-                        out.attentions[layer][i, :, start:end, start:end].mean(dim=0)
+                        out.attentions[layer][i, :, start:end, start:end].mean(dim=0).to( dtype=torch.float16)
                         for layer in range(self.num_layers)
                     ]
                 ).mean(dim=0)
                 for i in range(len(batch_labels))
             ]
 
+    
+    
     def embed(self):
         with torch.no_grad():
             for batch_idx, batch in enumerate(self.data_loader):
+                torch.cuda.empty_cache()
+                # wait 5 seconds
                 labels = list(self.sequences.keys())[
                     batch_idx * self.batch_size : (batch_idx + 1) * self.batch_size
                 ]
@@ -194,6 +203,7 @@ class Antiberta2Embedder(BaseEmbedder):
                 input_ids, attention_mask = [
                     b.to(self.device, non_blocking=True) for b in batch
                 ]
+                # print(torch.cuda.memory_summary(device=torch.cuda.current_device()))
                 outputs = self.model(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
@@ -201,12 +211,36 @@ class Antiberta2Embedder(BaseEmbedder):
                     output_attentions=self.return_contacts,
                 )
                 representations = {
-                    layer: outputs.hidden_states[layer].to(device="cpu")
+                    layer: outputs.hidden_states[layer].to(device="cpu", dtype=torch.float16)
                     for layer in self.layers
                 }
                 self.sequence_labels.extend(labels)
                 self.extract_batch(outputs, representations, labels, batch_sequences)
                 print(
-                    f"{len(self.sequence_labels)} sequences of {len(self.sequences)} processed"
-                )
+                    f"Processed {len(self.sequence_labels)} out of {len(self.sequences)} sequences"
+                , end="\r")
+                
+
+                gc.collect()
+                # print(f"Memory footprint :{self.print_memory_footprint()}")
         print("Finished extracting embeddings")
+
+
+def write_batch(self, outputs, representations, batch_idx):
+    if self.extract_embeddings:
+        for layer, tensor in representations.items():
+            torch.save(
+                tensor,
+                f"{self.output_dir}/cache/embeddings_{layer}_batch{batch_idx}.pt",
+            )
+    if self.extract_attention_matrices:
+        for layer, matrices in self.attention_matrices_average_layers.items():
+            torch.save(
+                torch.save(matrices),
+                f"{self.output_dir}/cache/attention_matrices_{layer}_batch{batch_idx}.pt",
+            )
+        # if self.extract_cdr3_attention_matrices:
+        #     output["cdr3_attention_matrices"] = {
+        #         layer: matrix[i].detach().numpy().tolist()
+        #         for layer, matrix in self.cdr3_attention_matrices.items()
+        #     }

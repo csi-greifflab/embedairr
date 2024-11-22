@@ -1,6 +1,8 @@
 import torch
+import gc
 from esm import FastaBatchedDataset, pretrained
 from embedairr.base_embedder import BaseEmbedder
+# torch.set_default_dtype(torch.float16)
 
 
 class ESM2Embedder(BaseEmbedder):
@@ -12,7 +14,7 @@ class ESM2Embedder(BaseEmbedder):
             self.initialize_model()
         )
         self.layers = self.load_layers(self.layers)
-        self.data_loader = self.load_data()
+        self.data_loader = self.load_data( self.batch_size)
         self.set_output_objects()
 
     def initialize_model(self, model_name="esm2_t33_650M_UR50D"):
@@ -29,6 +31,8 @@ class ESM2Embedder(BaseEmbedder):
         if torch.cuda.is_available():
             model = model.cuda()
             print("Transferred model to GPU")
+        else:
+            print("No GPU available, using CPU")
         return model, alphabet, num_heads, num_layers
 
     def load_layers(self, layers):
@@ -42,11 +46,12 @@ class ESM2Embedder(BaseEmbedder):
         ]
         return layers
 
-    def load_data(self, batch_size=30000):
+    def load_data(self, batch_size=5000):
         print("Loading and batching input sequences...")
         # Creating a dataset from the input fasta file
         dataset = FastaBatchedDataset.from_file(self.fasta_path)
         # Generating batch indices based on token count
+        print( batch_size) 
         batches = dataset.get_batch_indices(batch_size, extra_toks_per_seq=1)
         # DataLoader to iterate through batches efficiently
         data_loader = torch.utils.data.DataLoader(
@@ -74,19 +79,53 @@ class ESM2Embedder(BaseEmbedder):
             for layer in range(1, self.num_layers + 1)
         }
 
+    # def extract_attention_matrices_average_layer(
+    #     self, out, representations, batch_labels, batch_sequences
+    # ):
+    #     dict_attention_matrices_average_layers = {
+    #         layer: (
+    #             self.attention_matrices_average_layers[layer]
+    #             + [
+    #                 out["attentions"][i, layer - 1, :, 1:-1, 1:-1].mean(0).cpu()
+    #                 for i in range(len(batch_labels))
+    #             ]
+    #         )
+    #         for layer in range(1, self.num_layers + 1)
+    #     }
+
     def extract_attention_matrices_average_layer(
         self, out, representations, batch_labels, batch_sequences
     ):
-        self.attention_matrices_average_layers = {
-            layer: (
-                self.attention_matrices_average_layers[layer]
-                + [
-                    out["attentions"][i, layer - 1, :, 1:-1, 1:-1].mean(0).cpu()
-                    for i in range(len(batch_labels))
-                ]
-            )
-            for layer in range(1, self.num_layers + 1)
-        }
+        # Directly append new batch matrices to the existing lists
+        for layer in range(1, self.num_layers + 1):
+            # Collect attention matrices for the current layer and average across heads
+            attentions_batch = [
+                out["attentions"][i, layer - 1, :, 1:-1, 1:-1].mean(0).to(torch.float16).cpu()
+                for i in range(len(batch_labels))
+            ]
+            # Append the new batch to the existing list
+            self.attention_matrices_average_layers[layer].extend(attentions_batch)
+
+
+
+
+        #instead of chanign all the code, get the dictioanry and stack the tensors
+        
+        # stacked_layers = []
+        # for layer, tensor_list in dict_attention_matrices_average_layers.items():
+        #     # Concatenate all tensors in the list along the first dimension (rows)
+        #     print(tensor_list[0].shape)
+        #     stacked_tensor = torch.stack(tensor_list, dim=0)
+        #     # Store the stacked tensor for the current layer
+        #     stacked_layers.append(stacked_tensor)
+        #     self.attention_matrices_average_layers[layer] = torch.cat(self.attention_matrices_average_layers[layer],stacked_layers, dim = 0 )
+        # if self.gino == 1:
+        #     print("ciao")
+        #     print(layer)
+        #     # print(tensor_list)
+        #     print(stacked_layers[1].shape)
+        #     print("AOAOAOOAOAOAOOA")
+        #     self.gino =0
 
     def extract_attention_matrices_average_all(
         self, out, representations, batch_labels, batch_sequences
@@ -94,7 +133,7 @@ class ESM2Embedder(BaseEmbedder):
         (
             self.attention_matrices_average_all
             + [
-                out["attentions"][i, :, :, 1:-1, 1:-1].mean(dim=(0, 1)).cpu()
+                out["attentions"][i, :, :, 1:-1, 1:-1].mean(dim=(0, 1)).to(device="cpu", dtype=torch.float16)
                 for i in range(len(batch_labels))
             ]
         )
@@ -158,15 +197,19 @@ class ESM2Embedder(BaseEmbedder):
                 outputs = self.model(
                     toks, repr_layers=self.layers, return_contacts=self.return_contacts
                 )
+                # outputs["attentions"].to( dtype=torch.float16)
                 # Extracting layer representations and moving them to CPU
                 representations = {
-                    layer: t.to(device="cpu")
+                    layer: t.to(device="cpu", dtype=torch.float16)
                     for layer, t in outputs["representations"].items()
                 }
                 self.sequence_labels.extend(labels)
                 self.extract_batch(outputs, representations, labels, strs)
                 # print total progress
                 print(
-                    f"{len(self.sequence_labels)} sequences of {len(self.sequences)} processed"
+                    f"{len(self.sequence_labels)} sequences of {len(self.sequences)} processed" , end="\r"
                 )
+                gc.collect()
+
         print("Finished extracting embeddings")
+
