@@ -15,7 +15,8 @@ class BaseEmbedder:
         self.context = args.context
         self.layers = list(map(int, args.layers.split()))
         self.cdr3_dict = self.load_cdr3(args.cdr3_path)
-        self.batch_size = args.batch_size  # TODO make this an argument
+
+        self.batch_size = args.batch_size
         self.max_length = 200  # TODO make this an argument
         if torch.cuda.is_available():
             self.device = torch.device("cuda")

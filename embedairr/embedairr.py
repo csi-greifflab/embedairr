@@ -75,7 +75,6 @@ def parse_arguments():
         nargs="+",
         help="Set the CDR3 attention matrix return types. Choose one or more from: 'False', 'all_heads', 'average_layer', 'average_all'. Requires --cdr3_path to be set. Default is 'False'.",
     )
-    # arguemnt for batch_size
     parser.add_argument(
         "--batch_size",
         type=int,
