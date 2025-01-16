@@ -24,6 +24,7 @@ class BaseEmbedder:
         for output_type in self.output_types:
             if "attention" in output_type:
                 self.return_contacts = True
+        self.discard_padding = args.discard_padding
 
     def set_output_objects(self):
         """Initialize output objects."""
@@ -104,7 +105,7 @@ class BaseEmbedder:
 
         return output_types, extraction_methods_list
 
-    def fasta_to_dict(self, fasta_path, gaps=False):
+    def fasta_to_dict(self, fasta_path, gaps=False, padding=False):
         """Convert FASTA file into a dictionary."""
         print("Loading and batching input sequences...")
 
@@ -139,7 +140,18 @@ class BaseEmbedder:
 
         _flush_current_seq()
 
-        return seq_dict
+        if not padding:
+            return seq_dict
+        elif self.model_name == "esm2":
+            padded_seq_dict = dict()
+            for label, sequence in seq_dict.items():
+                if len(sequence) < self.max_length:
+                    padded_seq_dict[label] = sequence + "<pad>" * (
+                        self.max_length - len(sequence)
+                    )
+                else:
+                    padded_seq_dict[label] = sequence[: self.max_length]
+            return seq_dict, padded_seq_dict
 
     def load_cdr3(self, cdr3_path):
         """Load CDR3 sequences and store in a dictionary."""
@@ -191,29 +203,6 @@ class BaseEmbedder:
         for method in self.extraction_methods:
             method(out, representations, batch_labels, batch_sequences)
 
-    def extract_embeddings(self, out, representations, batch_labels, batch_sequences):
-        self.embeddings = {
-            layer: (
-                self.embeddings[layer]
-                + [
-                    representations[layer][i, 1 : len(batch_sequences[i]) + 1].mean(0)
-                    for i in range(len(batch_labels))
-                ]
-            )
-            for layer in self.layers
-        }
-
-    def extract_embeddings_unpooled(
-        self, out, representations, batch_labels, batch_sequences
-    ):
-        self.embeddings_unpooled = {
-            layer: (
-                self.embeddings_unpooled[layer]
-                + [representations[layer][i] for i in range(len(batch_labels))]
-            )
-            for layer in self.layers
-        }
-
     def extract_cdr3(self, out, representations, batch_labels, batch_sequences):
         for i, label in enumerate(batch_labels):
             start, end = self.get_cdr3_positions(label, context=self.context)
@@ -254,6 +243,10 @@ class BaseEmbedder:
                     )
                     if "unpooled" not in output_type:
                         getattr(self, output_type)[layer] = torch.vstack(
+                            getattr(self, output_type)[layer]
+                        )
+                    elif not self.discard_padding:
+                        getattr(self, output_type)[layer] = torch.stack(
                             getattr(self, output_type)[layer]
                         )
                     torch.save(getattr(self, output_type)[layer], output_file_layer)

@@ -6,8 +6,9 @@ from embedairr.base_embedder import BaseEmbedder
 class ESM2Embedder(BaseEmbedder):
     def __init__(self, args):
         super().__init__(args)
-
-        self.sequences = self.fasta_to_dict(args.fasta_path)
+        self.sequences, self.sequences_padded = self.fasta_to_dict(
+            args.fasta_path, padding=True
+        )
         self.model, self.alphabet, self.num_heads, self.num_layers = (
             self.initialize_model()
         )
@@ -45,7 +46,10 @@ class ESM2Embedder(BaseEmbedder):
     def load_data(self, batch_size=30000):
         print("Loading and batching input sequences...")
         # Creating a dataset from the input fasta file
-        dataset = FastaBatchedDataset.from_file(self.fasta_path)
+        dataset = FastaBatchedDataset(
+            sequence_strs=self.sequences_padded.values(),
+            sequence_labels=self.sequences_padded.keys(),
+        )
         # Generating batch indices based on token count
         batches = dataset.get_batch_indices(batch_size, extra_toks_per_seq=1)
         # DataLoader to iterate through batches efficiently
@@ -56,6 +60,48 @@ class ESM2Embedder(BaseEmbedder):
         )
         print(f"Read {self.fasta_path} with {len(dataset)} sequences")
         return data_loader
+
+    def extract_embeddings(self, out, representations, batch_labels, batch_sequences):
+        self.embeddings = {
+            layer: (
+                self.embeddings[layer]
+                + [
+                    representations[layer][
+                        i, 1 : len(batch_sequences[i].replace("<pad>", ""))
+                    ].mean(0)
+                    for i in range(len(batch_labels))
+                ]
+            )
+            for layer in self.layers
+        }
+
+    def extract_embeddings_unpooled(
+        self, out, representations, batch_labels, batch_sequences
+    ):
+        if not self.discard_padding:
+            self.embeddings_unpooled = {
+                layer: (
+                    self.embeddings_unpooled[layer]
+                    + [
+                        representations[layer][i][1:-1]
+                        for i in range(len(batch_labels))
+                    ]
+                )
+                for layer in self.layers
+            }
+        else:
+            self.embeddings_unpooled = {
+                layer: (
+                    self.embeddings_unpooled[layer]
+                    + [
+                        representations[layer][
+                            i, 1 : len(batch_sequences[i].replace("<pad>", ""))
+                        ]
+                        for i in range(len(batch_labels))
+                    ]
+                )
+                for layer in self.layers
+            }
 
     def extract_attention_matrices_all_heads(
         self, out, representations, batch_labels, batch_sequences

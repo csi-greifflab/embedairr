@@ -55,7 +55,7 @@ class Antiberta2Embedder(BaseEmbedder):
             padding="max_length",
             return_tensors="pt",
             add_special_tokens=True,
-            max_length=self.max_length,
+            max_length=self.max_length + 2,
         )
 
         # Extract input_ids and attention masks directly from the tokens
@@ -67,6 +67,44 @@ class Antiberta2Embedder(BaseEmbedder):
         data_loader = DataLoader(dataset, batch_size=self.batch_size)
 
         return data_loader
+
+    def extract_embeddings(self, out, representations, batch_labels, batch_sequences):
+        self.embeddings = {
+            layer: (
+                self.embeddings[layer]
+                + [
+                    representations[layer][i, 1 : len(batch_sequences[i]) + 1].mean(0)
+                    for i in range(len(batch_labels))
+                ]
+            )
+            for layer in self.layers
+        }
+
+    def extract_embeddings_unpooled(
+        self, out, representations, batch_labels, batch_sequences
+    ):
+        if not self.discard_padding:
+            self.embeddings_unpooled = {
+                layer: (
+                    self.embeddings_unpooled[layer]
+                    + [
+                        representations[layer][i][1:-1]
+                        for i in range(len(batch_labels))
+                    ]
+                )
+                for layer in self.layers
+            }
+        else:
+            self.embeddings_unpooled = {
+                layer: (
+                    self.embeddings_unpooled[layer]
+                    + [
+                        representations[layer][i, 1 : len(batch_sequences[i]) + 1]
+                        for i in range(len(batch_labels))
+                    ]
+                )
+                for layer in self.layers
+            }
 
     def extract_attention_matrices_all_heads(
         self, out, representations, batch_labels, batch_sequences
