@@ -12,10 +12,11 @@ class BaseEmbedder:
         self.context = args.context
         self.layers = list(map(int, args.layers.split()))
         self.cdr3_dict = self.load_cdr3(args.cdr3_path)
-        self.batch_size = 30000  # TODO make this an argument
+        self.batch_size = args.batch_size
         self.max_length = 200  # TODO make this an argument
         if torch.cuda.is_available():
             self.device = torch.device("cuda")
+            print("Transferred model to GPU")
         else:
             self.device = torch.device("cpu")
         self.output_types, self.extraction_methods = self.get_output_types(args)
@@ -208,10 +209,7 @@ class BaseEmbedder:
         self.embeddings_unpooled = {
             layer: (
                 self.embeddings_unpooled[layer]
-                + [
-                    representations[layer][i, 1 : len(batch_sequences[i]) + 1]
-                    for i in range(len(batch_labels))
-                ]
+                + [representations[layer][i] for i in range(len(batch_labels))]
             )
             for layer in self.layers
         }
@@ -299,7 +297,9 @@ class BaseEmbedder:
 
     def export_sequence_indices(self):
         """Save sequence indices to a CSV file."""
-        output_name = os.path.basename(self.fasta_path).replace(".fa", "_idx.csv")
+        filename = os.path.basename(self.fasta_path)
+        # replace file extension with _idx.csv regardless of pattern
+        output_name = os.path.splitext(filename)[0] + "_idx.csv"
         output_file_idx = os.path.join(self.output_path, output_name)
         with open(output_file_idx, "w") as f:
             f.write("index,sequence_id\n")

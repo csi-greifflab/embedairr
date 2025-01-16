@@ -7,21 +7,23 @@ from embedairr.base_embedder import BaseEmbedder
 class Antiberta2Embedder(BaseEmbedder):
     def __init__(self, args):
         super().__init__(args)
-        self.sequences = self.fasta_to_dict(args.fasta_path, gaps=True)
+        self.sequences_gapped = self.fasta_to_dict(args.fasta_path, gaps=True)
         self.model, self.tokenizer, self.num_heads, self.num_layers = (
             self.initialize_model("alchemab/antiberta2-cssp")
         )
         self.layers = self.load_layers(self.layers)
-        self.data_loader = self.load_data(self.max_length, self.batch_size)
+        self.data_loader = self.load_data()
         self.sequences = {
             sequence_id: sequence_aa.replace(" ", "")
-            for sequence_id, sequence_aa in self.sequences.items()
+            for sequence_id, sequence_aa in self.sequences_gapped.items()
         }
         self.set_output_objects()
 
     def initialize_model(self, model_name="alchemab/antiberta2-cssp"):
         """Initialize the model, tokenizer, and device."""
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # print device type
+        print(f"Device type: {device}")
         tokenizer = RoFormerTokenizer.from_pretrained(model_name)
         model = RoFormerModel.from_pretrained(model_name).to(device)
         model.eval()
@@ -44,40 +46,26 @@ class Antiberta2Embedder(BaseEmbedder):
         ]
         return layers
 
-    def load_data(self, max_length, batch_size):
+    def load_data(self):
         """Tokenize sequences and create a DataLoader."""
         # Tokenize sequences
-        input_ids = []
-        attention_masks = []
-        total_sequences = len(self.sequences)
-        print("Start tokenization")
-        for counter, sequence in enumerate(self.sequences.values()):
-            tokens = self.tokenizer(
-                sequence,
-                truncation=False,
-                padding="max_length",
-                return_tensors="pt",
-                add_special_tokens=True,
-                max_length=max_length,
-            )
-            input_ids.append(tokens["input_ids"])
-            attention_masks.append(tokens["attention_mask"])
-            # Calculate and print the percentage of completion
-            percent_complete = ((counter + 1) / total_sequences) * 100
-            # Check and print the progress at each 2% interval
-            if (counter + 1) == total_sequences or int(percent_complete) % 2 == 0:
-                # Ensures the message is printed once per interval and at 100% completion
-                if (counter + 1) == total_sequences or (
-                    int(percent_complete / 2)
-                    != int(((counter) / total_sequences) * 100 / 2)
-                ):
-                    print(f"Progress: {percent_complete:.2f}%", end="\r")
+        tokens = self.tokenizer(
+            list(self.sequences_gapped.values()),
+            truncation=True,
+            padding="max_length",
+            return_tensors="pt",
+            add_special_tokens=True,
+            max_length=self.max_length,
+        )
 
-        # Convert lists to tensors and create a dataset
-        input_ids = torch.cat(input_ids, dim=0)
-        attention_masks = torch.cat(attention_masks, dim=0)
+        # Extract input_ids and attention masks directly from the tokens
+        input_ids = tokens["input_ids"]
+        attention_masks = tokens["attention_mask"]
+
+        # Create a dataset and a DataLoader
         dataset = TensorDataset(input_ids, attention_masks)
-        data_loader = DataLoader(dataset, batch_size=batch_size)
+        data_loader = DataLoader(dataset, batch_size=self.batch_size)
+
         return data_loader
 
     def extract_attention_matrices_all_heads(
