@@ -86,6 +86,11 @@ def parse_arguments():
         action="store_true",
         help="Discard padding tokens from unpooled embeddings output. Default is False.",
     )
+    parser.add_argument(
+        "--max_length",
+        default=200,
+        help="Length to which sequences will be padded. Default is 200.",
+    )
 
     # TODO add experiment name
     args = parser.parse_args()

@@ -55,7 +55,7 @@ class Antiberta2Embedder(BaseEmbedder):
             padding="max_length",
             return_tensors="pt",
             add_special_tokens=True,
-            max_length=self.max_length + 2,
+            max_length=self.max_length + 2,  # accomodate for special tokens,
         )
 
         # Extract input_ids and attention masks directly from the tokens

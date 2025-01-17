@@ -13,7 +13,7 @@ class BaseEmbedder:
         self.layers = list(map(int, args.layers.split()))
         self.cdr3_dict = self.load_cdr3(args.cdr3_path)
         self.batch_size = args.batch_size
-        self.max_length = 200  # TODO make this an argument
+        self.max_length = args.max_length
         if torch.cuda.is_available():
             self.device = torch.device("cuda")
             print("Transferred model to GPU")
