@@ -1,6 +1,6 @@
 # EmbedAIRR
 
-EmbedAIRR is a tool for extracting embeddings and attention matrices from protein sequences using pre-trained models. This tool supports various configurations for extracting embeddings and attention matrices, including options for handling CDR3 sequences. Currently implemented models are ESM2 and AntiBERTa2-CSSP.
+EmbedAIRR is a tool for extracting embeddings and attention matrices from protein sequences using pre-trained models. This tool supports various configurations for extracting embeddings and attention matrices, including options for handling CDR3 sequences. Currently implemented models are ESM2 from the 2023 paper ["Evolutionary-scale prediction of atomic-level protein structure with a language model"](https://science.org/doi/10.1126/science.ade2574)and AntiBERTa2-CSSP from the 2023 pre-print ["Enhancing Antibody Language Models with Structural Information"](https://www.mlsb.io/papers_2023/Enhancing_Antibody_Language_Models_with_Structural_Information.pdf).
 
 ## Usage
 
