@@ -16,7 +16,7 @@ EmbedAIRR is a tool for extracting embeddings and attention matrices from protei
 
 3. Run the embedding script:
     ```sh
-    python embed_airr.py --input <input-file> --output <output-file>
+    python embed_airr.py --fasta_path <input-file> --output_path <output-file> --model_name <model_name> --<optional_arguments>
     ```
 
 ## Arguments
