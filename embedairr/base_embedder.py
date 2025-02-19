@@ -4,7 +4,9 @@ import torch
 import sys
 import gc
 from itertools import islice
-os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"]="false"
+
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+
 
 class BaseEmbedder:
     def __init__(self, args):
@@ -15,9 +17,8 @@ class BaseEmbedder:
         self.context = args.context
         self.layers = list(map(int, args.layers.split()))
         self.cdr3_dict = self.load_cdr3(args.cdr3_path)
-
         self.batch_size = args.batch_size
-        self.max_length = 200  # TODO make this an argument
+        self.max_length = args.max_length
         if torch.cuda.is_available():
             self.device = torch.device("cuda")
             print("Transferred model to GPU")
@@ -28,6 +29,7 @@ class BaseEmbedder:
         for output_type in self.output_types:
             if "attention" in output_type:
                 self.return_contacts = True
+        self.discard_padding = args.discard_padding
         self.flatten = True
 
     def set_output_objects(self):
@@ -109,7 +111,7 @@ class BaseEmbedder:
 
         return output_types, extraction_methods_list
 
-    def fasta_to_dict(self, fasta_path, gaps=False):
+    def fasta_to_dict(self, fasta_path, gaps=False, padding=False):
         """Convert FASTA file into a dictionary."""
         print("Loading and batching input sequences...")
 
@@ -144,7 +146,28 @@ class BaseEmbedder:
 
         _flush_current_seq()
 
-        return seq_dict
+        if gaps == False:
+            longest_sequence = max(len(seq) for seq in seq_dict.values())
+        else:
+            longest_sequence = max(len(seq.split()) for seq in seq_dict.values())
+
+        if self.max_length < longest_sequence:
+            # raise warning
+            raise ValueError(
+                f"Longest sequence with length {longest_sequence} is longer than the specified max_length {self.max_length} for padding"
+            )
+        if not padding:
+            return seq_dict
+        elif self.model_name == "esm2":
+            padded_seq_dict = dict()
+            for label, sequence in seq_dict.items():
+                if len(sequence) < self.max_length:
+                    padded_seq_dict[label] = sequence + "<pad>" * (
+                        self.max_length - len(sequence)
+                    )
+                else:
+                    padded_seq_dict[label] = sequence[: self.max_length]
+            return seq_dict, padded_seq_dict
 
     def load_cdr3(self, cdr3_path):
         """Load CDR3 sequences and store in a dictionary."""
@@ -199,32 +222,6 @@ class BaseEmbedder:
         for method in self.extraction_methods:
             method(out, representations, batch_labels, batch_sequences)
 
-    def extract_embeddings(self, out, representations, batch_labels, batch_sequences):
-        self.embeddings = {
-            layer: (
-                self.embeddings[layer]
-                + [
-                    representations[layer][i, 1 : len(batch_sequences[i]) + 1].mean(0)
-                    for i in range(len(batch_labels))
-                ]
-            )
-            for layer in self.layers
-        }
-
-    def extract_embeddings_unpooled(
-        self, out, representations, batch_labels, batch_sequences
-    ):
-        self.embeddings_unpooled = {
-            layer: (
-                self.embeddings_unpooled[layer]
-                + [
-                    representations[layer][i, 1 : len(batch_sequences[i]) + 1]
-                    for i in range(len(batch_labels))
-                ]
-            )
-            for layer in self.layers
-        }
-
     def extract_cdr3(self, out, representations, batch_labels, batch_sequences):
         for i, label in enumerate(batch_labels):
             start, end = self.get_cdr3_positions(label, context=self.context)
@@ -269,9 +266,14 @@ class BaseEmbedder:
                             getattr(self, output_type)[layer]
                         )
                     if self.flatten and "unpooled" in output_type:
-                        torch.save(torch.stack(getattr(self, output_type)[layer],dim=0).flatten(start_dim=1), output_file_layer)
-                    else:
-                        torch.save((getattr(self, output_type)[layer]), output_file_layer)
+                        getattr(self, output_type)[layer] = torch.stack(
+                            getattr(self, output_type)[layer], dim=0
+                        ).flatten(start_dim=1)
+                    elif not self.discard_padding:
+                        getattr(self, output_type)[layer] = torch.stack(
+                            getattr(self, output_type)[layer]
+                        )
+                    torch.save((getattr(self, output_type)[layer]), output_file_layer)
                     print(
                         f"Saved {output_type} representation for layer {layer} to {output_file_layer}"
                     )
@@ -283,9 +285,16 @@ class BaseEmbedder:
                     f"{output_name}_{self.model_name}_{output_type}.pt",
                 )
                 if self.flatten:
-                    torch.save(torch.stack( getattr(self, output_type), dim=0).flatten(start_dim=1), output_file)
+                    torch.save(
+                        torch.stack(getattr(self, output_type), dim=0).flatten(
+                            start_dim=1
+                        ),
+                        output_file,
+                    )
                 else:
-                    torch.save(torch.stack( getattr(self, output_type), dim=0), output_file)
+                    torch.save(
+                        torch.stack(getattr(self, output_type), dim=0), output_file
+                    )
                 print(f"Saved {output_type} representation to {output_file}")
             elif "average_layer" in output_type:
                 for layer in self.layers:
@@ -296,9 +305,16 @@ class BaseEmbedder:
                         f"{output_name}_{self.model_name}_{output_type}_layer_{layer}.pt",
                     )
                     if self.flatten:
-                        torch.save(torch.stack(getattr(self, output_type)[layer], dim=0).flatten(start_dim=1), output_file)
+                        torch.save(
+                            torch.stack(
+                                getattr(self, output_type)[layer], dim=0
+                            ).flatten(start_dim=1),
+                            output_file,
+                        )
                     else:
-                        torch.save(torch.stack(getattr(self, output_type)[layer]), output_file)
+                        torch.save(
+                            torch.stack(getattr(self, output_type)[layer]), output_file
+                        )
                     print(
                         f"Saved {output_type} representation for layer {layer} to {output_file}"
                     )
@@ -312,17 +328,26 @@ class BaseEmbedder:
                             f"{output_name}_{self.model_name}_{output_type}_layer_{layer}_head_{head + 1}.pt",
                         )
                         if self.flatten:
-                            torch.save( torch.stack( getattr(self, output_type)[layer][head], dim=0).flatten(start_dim=1), output_file)
+                            torch.save(
+                                torch.stack(
+                                    getattr(self, output_type)[layer][head], dim=0
+                                ).flatten(start_dim=1),
+                                output_file,
+                            )
                         else:
-                            torch.save( torch.stack( getattr(self, output_type)[layer][head]), output_file)
+                            torch.save(
+                                torch.stack(getattr(self, output_type)[layer][head]),
+                                output_file,
+                            )
                         print(
                             f"Saved {output_type} representation for layer {layer} head {head + 1} to {output_file}"
                         )
-    
 
     def export_sequence_indices(self):
         """Save sequence indices to a CSV file."""
-        output_name = os.path.basename(self.fasta_path).replace(".fa", "_idx.csv")
+        filename = os.path.basename(self.fasta_path)
+        # replace file extension with _idx.csv regardless of pattern
+        output_name = os.path.splitext(filename)[0] + "_idx.csv"
         output_file_idx = os.path.join(self.output_path, output_name)
         with open(output_file_idx, "w") as f:
             f.write("index,sequence_id\n")
@@ -338,9 +363,6 @@ class BaseEmbedder:
             if not os.path.exists(output_type_path):
                 os.makedirs(output_type_path)
 
-
-
-
     def run(self):
         self.create_output_dirs()
         print("Created output directories")
@@ -348,7 +370,7 @@ class BaseEmbedder:
         print("Start embedding extraction")
         self.embed()
         print("Finished embedding extraction")
-        
+
         print("Saving embeddings...")
         self.export_to_disk()
 

@@ -7,7 +7,9 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.insert(0, parent_dir)
 from embedairr.model_selecter import select_model
-os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"]="false"
+
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+
 
 # Parsing command-line arguments for input and output file paths
 def parse_arguments():
@@ -81,6 +83,16 @@ def parse_arguments():
         default=1024,
         help="Batch size for loading sequences. Default is 1024.",
     )
+    parser.add_argument(
+        "--discard_padding",
+        action="store_true",
+        help="Discard padding tokens from unpooled embeddings output. Default is False.",
+    )
+    parser.add_argument(
+        "--max_length",
+        default=140,
+        help="Length to which sequences will be padded. Default is 200.",
+    )
 
     # TODO add experiment name
     args = parser.parse_args()
@@ -105,3 +117,8 @@ if __name__ == "__main__":
     embedder.run()
 
     print("All outputs saved.")
+
+# Clear gpu memory
+import torch
+
+torch.cuda.empty_cache()

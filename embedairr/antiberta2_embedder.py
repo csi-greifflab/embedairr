@@ -10,21 +10,24 @@ os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"]="false"
 class Antiberta2Embedder(BaseEmbedder):
     def __init__(self, args):
         super().__init__(args)
-        self.sequences = self.fasta_to_dict(args.fasta_path, gaps=True)
+        self.sequences_gapped = self.fasta_to_dict(args.fasta_path, gaps=True)
         self.model, self.tokenizer, self.num_heads, self.num_layers = (
             self.initialize_model("alchemab/antiberta2-cssp")
         )
         self.layers = self.load_layers(self.layers)
         self.data_loader = self.load_data()
+        self.data_loader = self.load_data()
         self.sequences = {
             sequence_id: sequence_aa.replace(" ", "")
-            for sequence_id, sequence_aa in self.sequences.items()
+            for sequence_id, sequence_aa in self.sequences_gapped.items()
         }
         self.set_output_objects()
 
     def initialize_model(self, model_name="alchemab/antiberta2-cssp"):
         """Initialize the model, tokenizer, and device."""
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # print device type
+        print(f"Device type: {device}")
         # print device type
         print(f"Device type: {device}")
         tokenizer = RoFormerTokenizer.from_pretrained(model_name)
@@ -50,15 +53,16 @@ class Antiberta2Embedder(BaseEmbedder):
         return layers
 
     def load_data(self):
+    def load_data(self):
         """Tokenize sequences and create a DataLoader."""
         # Tokenize sequences
         tokens = self.tokenizer(
-            list(self.sequences.values()),
+            list(self.sequences_gapped.values()),
             truncation=True,
             padding="max_length",
             return_tensors="pt",
             add_special_tokens=True,
-            max_length=self.max_length,
+            max_length=self.max_length + 2,  # accomodate for special tokens,
         )
 
         # Extract input_ids and attention masks directly from the tokens
@@ -67,9 +71,47 @@ class Antiberta2Embedder(BaseEmbedder):
 
         # Create a dataset and a DataLoader
         dataset = TensorDataset(input_ids, attention_masks)
-        data_loader = DataLoader(dataset, batch_size=batch_size)
+        data_loader = DataLoader(dataset, batch_size=self.batch_size)
 
         return data_loader
+
+    def extract_embeddings(self, out, representations, batch_labels, batch_sequences):
+        self.embeddings = {
+            layer: (
+                self.embeddings[layer]
+                + [
+                    representations[layer][i, 1 : len(batch_sequences[i]) + 1].mean(0)
+                    for i in range(len(batch_labels))
+                ]
+            )
+            for layer in self.layers
+        }
+
+    def extract_embeddings_unpooled(
+        self, out, representations, batch_labels, batch_sequences
+    ):
+        if not self.discard_padding:
+            self.embeddings_unpooled = {
+                layer: (
+                    self.embeddings_unpooled[layer]
+                    + [
+                        representations[layer][i][1:-1]
+                        for i in range(len(batch_labels))
+                    ]
+                )
+                for layer in self.layers
+            }
+        else:
+            self.embeddings_unpooled = {
+                layer: (
+                    self.embeddings_unpooled[layer]
+                    + [
+                        representations[layer][i, 1 : len(batch_sequences[i]) + 1]
+                        for i in range(len(batch_labels))
+                    ]
+                )
+                for layer in self.layers
+            }
 
     def extract_attention_matrices_all_heads(
         self, out, representations, batch_labels, batch_sequences
@@ -203,7 +245,7 @@ class Antiberta2Embedder(BaseEmbedder):
                 self.sequence_labels.extend(labels)
                 self.extract_batch(outputs, representations, labels, batch_sequences)
                 print(
-                    f"Processed {len(self.sequence_labels)} out of {len(self.sequences)} sequences"
+                    f"Processed {self.model_name}: {len(self.sequence_labels)} out of {len(self.sequences)} sequences"
                 , end="\r")
                 
                 gc.collect()
