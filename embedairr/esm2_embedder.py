@@ -213,6 +213,6 @@ class ESM2Embedder(BaseEmbedder):
                 self.extract_batch(outputs, representations, labels, strs)
                 # print total progress
                 print(
-                    f"{len(self.sequence_labels)} sequences of {len(self.sequences)} processed"
+                    f"{self.model_name}: {len(self.sequence_labels)} sequences of {len(self.sequences)} processed"
                 )
         print("Finished extracting embeddings")

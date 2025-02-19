@@ -140,6 +140,16 @@ class BaseEmbedder:
 
         _flush_current_seq()
 
+        if gaps == False:
+            longest_sequence = max(len(seq) for seq in seq_dict.values())
+        else:
+            longest_sequence = max(len(seq.split()) for seq in seq_dict.values())
+
+        if self.max_length < longest_sequence:
+            # raise warning
+            raise ValueError(
+                f"Longest sequence with length {longest_sequence} is longer than the specified max_length {self.max_length} for padding"
+            )
         if not padding:
             return seq_dict
         elif self.model_name == "esm2":

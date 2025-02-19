@@ -88,7 +88,7 @@ def parse_arguments():
     )
     parser.add_argument(
         "--max_length",
-        default=200,
+        default=140,
         help="Length to which sequences will be padded. Default is 200.",
     )
 
@@ -114,3 +114,8 @@ if __name__ == "__main__":
     embedder.run()
 
     print("All outputs saved.")
+
+# Clear gpu memory
+import torch
+
+torch.cuda.empty_cache()

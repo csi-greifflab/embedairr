@@ -233,6 +233,6 @@ class Antiberta2Embedder(BaseEmbedder):
                 self.sequence_labels.extend(labels)
                 self.extract_batch(outputs, representations, labels, batch_sequences)
                 print(
-                    f"{len(self.sequence_labels)} sequences of {len(self.sequences)} processed"
+                    f"{self.model_name}: {len(self.sequence_labels)} sequences of {len(self.sequences)} processed"
                 )
         print("Finished extracting embeddings")
