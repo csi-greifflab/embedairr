@@ -267,14 +267,17 @@ class BaseEmbedder:
                         getattr(self, output_type)[layer] = torch.vstack(
                             getattr(self, output_type)[layer]
                         )
+                        stacked = True
                     if self.flatten and "unpooled" in output_type:
                         getattr(self, output_type)[layer] = torch.stack(
                             getattr(self, output_type)[layer], dim=0
                         ).flatten(start_dim=1)
-                    elif not self.discard_padding:
+                        stacked = True
+                    elif not self.discard_padding and not stacked:
                         getattr(self, output_type)[layer] = torch.stack(
                             getattr(self, output_type)[layer]
                         )
+                        stacked = True
                     torch.save((getattr(self, output_type)[layer]), output_file_layer)
                     print(
                         f"Saved {output_type} representation for layer {layer} to {output_file_layer}"
