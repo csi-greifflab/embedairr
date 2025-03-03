@@ -153,9 +153,10 @@ class BaseEmbedder:
 
         if self.max_length < longest_sequence:
             # raise warning
-            raise ValueError(
+            print(
                 f"Longest sequence with length {longest_sequence} is longer than the specified max_length {self.max_length} for padding"
             )
+            self.max_length = longest_sequence
         if not padding:
             return seq_dict
         elif self.model_name == "esm2":
@@ -253,6 +254,7 @@ class BaseEmbedder:
             0
         ]  # get filename without extension and path
         for output_type in self.output_types:
+            print(f"Saving {output_type} representations...")
             if "attention_matrices" not in output_type:
                 for layer in self.layers:
                     output_file_layer = os.path.join(

@@ -86,8 +86,7 @@ class ESM2Embedder(BaseEmbedder):
         if not self.discard_padding:
             self.embeddings_unpooled = {
                 layer: (
-                    self.embeddings_unpooled[layer]
-                    + [
+                    self.embeddings_unpooled[layer] + [
                         representations[layer][i][1:-1]
                         for i in range(len(batch_labels))
                     ]
@@ -97,8 +96,7 @@ class ESM2Embedder(BaseEmbedder):
         else:
             self.embeddings_unpooled = {
                 layer: (
-                    self.embeddings_unpooled[layer]
-                    + [
+                    self.embeddings_unpooled[layer] + [
                         representations[layer][
                             i, 1 : len(batch_sequences[i].replace("<pad>", ""))
                         ]
@@ -114,22 +112,21 @@ class ESM2Embedder(BaseEmbedder):
         self.attention_matrices_all_heads = {
             layer: {
                 head: (
-                    self.attention_matrices_all_heads[layer][head]
-                    + [
+                    self.attention_matrices_all_heads[layer][head] + [
                         out["attentions"][i, layer - 1, head, 1:-1, 1:-1].cpu()
                         for i in range(len(batch_labels))
                     ]
                 )
                 for head in range(self.num_heads)
             }
-            for layer in range(1, self.num_layers + 1)
+            for layer in self.layers
         }
 
     def extract_attention_matrices_average_layer(
         self, out, representations, batch_labels, batch_sequences
     ):
         # Directly append new batch matrices to the existing lists
-        for layer in range(1, self.num_layers + 1):
+        for layer in self.layers:
             # Collect attention matrices for the current layer and average across heads
             attentions_batch = [
                 out["attentions"][i, layer - 1, :, 1:-1, 1:-1]
@@ -171,7 +168,7 @@ class ESM2Embedder(BaseEmbedder):
                     )
                     for head in range(self.num_heads)
                 }
-                for layer in range(1, self.num_layers + 1)
+                for layer in self.layers
             }
 
     def extract_cdr3_attention_matrices_average_layer(
@@ -181,14 +178,13 @@ class ESM2Embedder(BaseEmbedder):
             start, end = self.get_cdr3_positions(label)
             self.cdr3_attention_matrices_average_layers = {
                 layer: (
-                    self.cdr3_attention_matrices_average_layers[layer]
-                    + [
+                    self.cdr3_attention_matrices_average_layers[layer] + [
                         out["attentions"][i, layer - 1, :, start:end, start:end]
                         .mean(0)
                         .cpu()
                     ]
                 )
-                for layer in range(1, self.num_layers + 1)
+                for layer in self.layers
             }
 
     def extract_cdr3_attention_matrices_average_all(
@@ -197,8 +193,7 @@ class ESM2Embedder(BaseEmbedder):
         for i, label in enumerate(batch_labels):
             start, end = self.get_cdr3_positions(label)
             (
-                self.cdr3_attention_maembedder.attention_matrices_all_headstrices_average_all
-                + [
+                self.cdr3_attention_maembedder.attention_matrices_all_headstrices_average_all + [
                     out["attentions"][i, :, :, start:end, start:end]
                     .mean(dim=(0, 1))
                     .cpu()
