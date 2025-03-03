@@ -104,12 +104,10 @@ class Antiberta2Embedder(BaseEmbedder):
         else:
             self.embeddings_unpooled = {
                 layer: (
-                    self.embeddings_unpooled[layer].extend(
-                        [
+                    self.embeddings_unpooled[layer] + [
                             representations[layer][i, 1 : len(batch_sequences[i]) + 1]
                             for i in range(len(batch_labels))
                         ]
-                    )
                 )
                 for layer in self.layers
             }
