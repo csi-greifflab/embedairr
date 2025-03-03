@@ -78,14 +78,12 @@ class Antiberta2Embedder(BaseEmbedder):
     def extract_embeddings(self, out, representations, batch_labels, batch_sequences):
         self.embeddings = {
             layer: (
-                self.embeddings[layer].extend(
-                    [
+                self.embeddings[layer] + [
                         representations[layer][i, 1 : len(batch_sequences[i]) + 1].mean(
                             0
                         )
                         for i in range(len(batch_labels))
                     ]
-                )
             )
             for layer in self.layers
         }
@@ -96,12 +94,10 @@ class Antiberta2Embedder(BaseEmbedder):
         if not self.discard_padding:
             self.embeddings_unpooled = {
                 layer: (
-                    self.embeddings_unpooled[layer].extend(
-                        [
+                    self.embeddings_unpooled[layer] + [
                             representations[layer][i][1:-1]
                             for i in range(len(batch_labels))
                         ]
-                    )
                 )
                 for layer in self.layers
             }
