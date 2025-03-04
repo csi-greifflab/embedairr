@@ -16,7 +16,7 @@ class ESM2Embedder(BaseEmbedder):
             self.initialize_model()
         )
         self.layers = self.load_layers(self.layers)
-        self.data_loader = self.load_data(self.batch_size)
+        self.data_loader = self.load_data()
         self.set_output_objects()
 
     def initialize_model(self, model_name="esm2_t33_650M_UR50D"):
@@ -128,22 +128,22 @@ class ESM2Embedder(BaseEmbedder):
         # Directly append new batch matrices to the existing lists
         for layer in self.layers:
             # Collect attention matrices for the current layer and average across heads
-            attentions_batch = [
-                out["attentions"][i, layer - 1, :, 1:-1, 1:-1]
-                .mean(0)
-                .to(torch.float16)
-                .cpu()
-                for i in range(len(batch_labels))
-            ]
             # Append the new batch to the existing list
-            self.attention_matrices_average_layers[layer].extend(attentions_batch)
+            self.attention_matrices_average_layers[layer].extend(
+                [
+                    out["attentions"][i, layer - 1, :, 1:-1, 1:-1]
+                    .mean(0)
+                    .to(torch.float16)
+                    .cpu()
+                    for i in range(len(batch_labels))
+                ]
+            )
 
     def extract_attention_matrices_average_all(
         self, out, representations, batch_labels, batch_sequences
     ):
-        (
-            self.attention_matrices_average_all
-            + [
+        self.attention_matrices_average_all.extend(
+            [
                 out["attentions"][i, :, :, 1:-1, 1:-1]
                 .mean(dim=(0, 1))
                 .to(device="cpu", dtype=torch.float16)
@@ -159,8 +159,7 @@ class ESM2Embedder(BaseEmbedder):
             self.cdr3_attention_matrices_all_heads = {
                 layer: {
                     head: (
-                        self.cdr3_attention_matrices_all_heads[layer][head]
-                        + [
+                        self.cdr3_attention_matrices_all_heads[layer][head] + [
                             out["attentions"][
                                 i, layer - 1, head, start:end, start:end
                             ].cpu()
@@ -192,14 +191,14 @@ class ESM2Embedder(BaseEmbedder):
     ):
         for i, label in enumerate(batch_labels):
             start, end = self.get_cdr3_positions(label)
-            (
-                self.cdr3_attention_maembedder.attention_matrices_all_headstrices_average_all + [
+            self.cdr3_attention_maembedder.attention_matrices_all_headstrices_average_all.extend(
+                [
                     out["attentions"][i, :, :, start:end, start:end]
                     .mean(dim=(0, 1))
                     .cpu()
                 ]
             )
-
+            
     def embed(self):
         with torch.no_grad():
             for labels, strs, toks in self.data_loader:
