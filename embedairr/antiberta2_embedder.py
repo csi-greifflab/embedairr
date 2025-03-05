@@ -16,6 +16,8 @@ class Antiberta2Embedder(BaseEmbedder):
         self.model, self.tokenizer, self.num_heads, self.num_layers = (
             self.initialize_model("alchemab/antiberta2-cssp")
         )
+        self.valid_tokens = set(self.tokenizer.get_vocab().keys())
+        self.check_input_tokens()
         self.layers = self.load_layers(self.layers)
         self.data_loader = self.load_data()
         self.sequences = {

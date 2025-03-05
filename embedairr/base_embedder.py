@@ -32,6 +32,15 @@ class BaseEmbedder:
         self.discard_padding = args.discard_padding
         self.flatten = True
 
+    def check_input_tokens(self):
+        print("Checking input sequences for invalid tokens...")
+        for label, sequence in self.sequences.items():
+            if not set(sequence).issubset(self.valid_tokens):
+                raise ValueError(
+                    f"Invalid tokens in sequence {label}. Please check the alphabet used by the model."
+                )
+        print("All input sequences contain valid tokens")
+
     def set_output_objects(self):
         """Initialize output objects."""
         self.sequence_labels = []
@@ -158,7 +167,7 @@ class BaseEmbedder:
             )
             self.max_length = longest_sequence
         if not padding:
-            return seq_dict
+            return seq_dict, None
         elif self.model_name == "esm2":
             padded_seq_dict = dict()
             for label, sequence in seq_dict.items():
