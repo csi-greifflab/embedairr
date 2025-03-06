@@ -3,6 +3,7 @@ import csv
 import torch
 import sys
 import gc
+import re
 from itertools import islice
 
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
@@ -32,10 +33,12 @@ class BaseEmbedder:
         self.discard_padding = args.discard_padding
         self.flatten = True
 
-    def check_input_tokens(self):
+    def check_input_tokens(self, valid_tokens, sequences, gaps=False):
         print("Checking input sequences for invalid tokens...")
-        for label, sequence in self.sequences.items():
-            if not set(sequence).issubset(self.valid_tokens):
+        for label, sequence in sequences.items():
+            if gaps:
+                sequence = sequence.split()
+            if not set(sequence).issubset(valid_tokens):
                 raise ValueError(
                     f"Invalid tokens in sequence {label}. Please check the alphabet used by the model."
                 )
@@ -127,6 +130,19 @@ class BaseEmbedder:
         seq_dict = dict()
         sequence_id = None
         sequence_aa = []
+        import re
+
+        def _clean_bracket_tokens(seq: str) -> str:
+            """
+            Remove spaces inside square or angle brackets.
+
+            Example:
+            "A B [ S E P ] C D" -> "A B [SEP] C D"
+            """
+            pattern = re.compile(r"([\[<])\s*([^]\>]+?)\s*([\]>])")
+            return pattern.sub(
+                lambda m: m.group(1) + m.group(2).replace(" ", "") + m.group(3), seq
+            )
 
         def _flush_current_seq():
             nonlocal sequence_id, sequence_aa
@@ -149,7 +165,9 @@ class BaseEmbedder:
                     if len(line) > 0:
                         sequence_id = line
                     else:
-                        sequence_id = f"seqnum{line_idx:09d}"
+                        sequence_id = (
+                            f"seqnum{line_idx:09d}"  # if no id, use line number
+                        )
                 else:
                     sequence_aa.append(line)
 
@@ -158,6 +176,9 @@ class BaseEmbedder:
         if gaps == False:
             longest_sequence = max(len(seq) for seq in seq_dict.values())
         else:
+            # delete only spaces between "[" and "]" but keep all others
+            for label, sequence in seq_dict.items():
+                seq_dict[label] = _clean_bracket_tokens(sequence)
             longest_sequence = max(len(seq.split()) for seq in seq_dict.values())
 
         if self.max_length < longest_sequence:

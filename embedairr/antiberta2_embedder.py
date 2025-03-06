@@ -12,12 +12,14 @@ os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 class Antiberta2Embedder(BaseEmbedder):
     def __init__(self, args):
         super().__init__(args)
-        self.sequences_gapped = self.fasta_to_dict(args.fasta_path, gaps=True)
+        self.sequences_gapped, self.sequences = self.fasta_to_dict(
+            args.fasta_path, gaps=True
+        )
         self.model, self.tokenizer, self.num_heads, self.num_layers = (
             self.initialize_model("alchemab/antiberta2-cssp")
         )
         self.valid_tokens = set(self.tokenizer.get_vocab().keys())
-        self.check_input_tokens()
+        # self.check_input_tokens(self.valid_tokens, self.sequences_gapped)
         self.layers = self.load_layers(self.layers)
         self.data_loader = self.load_data()
         self.sequences = {
