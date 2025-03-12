@@ -42,6 +42,8 @@ class BaseEmbedder:
         for label, sequence in sequences.items():
             if gaps:
                 sequence = sequence.split()
+            else:
+                sequence = re.findall(r'<.*?>|.', sequence)
             if not set(sequence).issubset(valid_tokens):
                 raise ValueError(
                     f"Invalid tokens in sequence {label}. Please check the alphabet used by the model."
