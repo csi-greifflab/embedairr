@@ -218,7 +218,7 @@ class Antiberta2Embedder(BaseEmbedder):
                 outputs = self.model(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
-                    output_hidden_states=True,
+                    output_hidden_states=self.return_embeddings,
                     output_attentions=self.return_contacts,
                 )
                 if self.return_contacts:
