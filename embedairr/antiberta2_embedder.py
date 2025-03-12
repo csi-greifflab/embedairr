@@ -79,7 +79,7 @@ class Antiberta2Embedder(BaseEmbedder):
 
         return data_loader
 
-    def extract_embeddings(self, out, representations, batch_labels, batch_sequences, pooling_mask):
+    def extract_embeddings(self, attention_matrices, representations, batch_labels, batch_sequences, pooling_mask):
         for layer in self.layers:
             self.embeddings[layer].extend(
                 [
@@ -92,7 +92,7 @@ class Antiberta2Embedder(BaseEmbedder):
             )
 
     def extract_embeddings_unpooled(
-        self, out, representations, batch_labels, batch_sequences, pooling_mask
+        self, attention_matrices, representations, batch_labels, batch_sequences, pooling_mask
     ):
         if not self.discard_padding:
             for layer in self.layers:
