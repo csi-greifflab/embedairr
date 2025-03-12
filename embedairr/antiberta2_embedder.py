@@ -97,7 +97,7 @@ class Antiberta2Embedder(BaseEmbedder):
         if not self.discard_padding:
             for layer in self.layers:
                 self.embeddings_unpooled[layer].extend(
-                    [representations[layer][i][1:-1] for i in range(len(batch_labels))]
+                    [representations[layer][i][1:] for i in range(len(batch_labels))] # remove CLS token
                 )
         else:
             for layer in self.layers:
@@ -115,7 +115,7 @@ class Antiberta2Embedder(BaseEmbedder):
             for head in range(self.num_heads):
                 self.attention_matrices_all_heads[layer][head].extend(
                     [
-                        attention_matrices[layer - 1, i, head, 1:-1, 1:-1]
+                        attention_matrices[layer - 1, i, head, 1:, 1:] # remove CLS token
                         .cpu()
                         .to(dtype=torch.float16)
                         for i in range(len(batch_labels))
@@ -128,7 +128,7 @@ class Antiberta2Embedder(BaseEmbedder):
         for layer in self.layers:
             self.attention_matrices_average_layers[layer].extend(
                 [
-                    attention_matrices[layer - 1, i, :, 1:-1, 1:-1]
+                    attention_matrices[layer - 1, i, :, 1:, 1:] # remove CLS token
                     .mean(0)
                     .to(device="cpu", dtype=torch.float16)  # average over heads
                     for i in range(len(batch_labels))

@@ -87,7 +87,7 @@ class ESM2Embedder(BaseEmbedder):
         if not self.discard_padding:
             for layer in self.layers:
                 self.embeddings_unpooled[layer].extend(
-                    [representations[layer][i][1:-1] for i in range(len(batch_labels))]
+                    [representations[layer][i][1:] for i in range(len(batch_labels))]
                 )
         else:
             for layer in self.layers:
@@ -107,7 +107,7 @@ class ESM2Embedder(BaseEmbedder):
             for head in range(self.num_heads):
                 self.attention_matrices_all_heads[layer][head].extend(
                     [
-                        attention_matrices[i, layer - 1, head, 1:-1, 1:-1].cpu()
+                        attention_matrices[i, layer - 1, head, 1:, 1:].cpu() # remove CLS token
                         for i in range(len(batch_labels))
                     ]
                 )
@@ -121,7 +121,7 @@ class ESM2Embedder(BaseEmbedder):
             # Append the new batch to the existing list
             self.attention_matrices_average_layers[layer].extend(
                 [
-                    attention_matrices[i, layer - 1, :, 1:-1, 1:-1]
+                    attention_matrices[i, layer - 1, :, 1:, 1:] # remove CLS token
                     .mean(0)
                     .to(torch.float16)
                     .cpu()
@@ -134,7 +134,7 @@ class ESM2Embedder(BaseEmbedder):
     ):
         self.attention_matrices_average_all.extend(
             [
-                attention_matrices[i, :, :, 1:-1, 1:-1]
+                attention_matrices[i, :, :, 1:, 1:] # remove CLS token
                 .mean(dim=(0, 1))
                 .to(device="cpu", dtype=torch.float16)
                 for i in range(len(batch_labels))
