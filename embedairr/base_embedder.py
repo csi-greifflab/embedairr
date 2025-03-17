@@ -3,6 +3,7 @@ import csv
 import torch
 import sys
 import gc
+import re
 from itertools import islice
 
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
@@ -31,6 +32,25 @@ class BaseEmbedder:
                 self.return_contacts = True
         self.discard_padding = args.discard_padding
         self.flatten = True
+        if (args.extract_embeddings[0] == "false") & (args.extract_cdr3_embeddings[0] == "false"):
+            self.return_embeddings = False
+        else:
+            self.return_embeddings = True
+
+    def check_input_tokens(self, valid_tokens, sequences, gaps=False):
+        print("Checking input sequences for invalid tokens...")
+        for i, (label, sequence) in enumerate(sequences.items()):
+            if gaps:
+                sequence = sequence.split()
+            else:
+                sequence = re.findall(r'<.*?>|.', sequence)
+            if not set(sequence).issubset(valid_tokens):
+                raise ValueError(
+                    f"Invalid tokens in sequence {label}. Please check the alphabet used by the model."
+                )
+            print(f'Processed {i} out of {len(sequences)} sequences', end="\r")
+
+        print("\nNo invalid tokens in input sequences.")
 
     def set_output_objects(self):
         """Initialize output objects."""
@@ -118,6 +138,19 @@ class BaseEmbedder:
         seq_dict = dict()
         sequence_id = None
         sequence_aa = []
+        import re
+
+        def _clean_bracket_tokens(seq: str) -> str:
+            """
+            Remove spaces inside square or angle brackets.
+
+            Example:
+            "A B [ S E P ] C D" -> "A B [SEP] C D"
+            """
+            pattern = re.compile(r"([\[<])\s*([^]\>]+?)\s*([\]>])")
+            return pattern.sub(
+                lambda m: m.group(1) + m.group(2).replace(" ", "") + m.group(3), seq
+            )
 
         def _flush_current_seq():
             nonlocal sequence_id, sequence_aa
@@ -140,7 +173,9 @@ class BaseEmbedder:
                     if len(line) > 0:
                         sequence_id = line
                     else:
-                        sequence_id = f"seqnum{line_idx:09d}"
+                        sequence_id = (
+                            f"seqnum{line_idx:09d}"  # if no id, use line number
+                        )
                 else:
                     sequence_aa.append(line)
 
@@ -149,15 +184,19 @@ class BaseEmbedder:
         if gaps == False:
             longest_sequence = max(len(seq) for seq in seq_dict.values())
         else:
+            # delete only spaces between "[" and "]" but keep all others
+            for label, sequence in seq_dict.items():
+                seq_dict[label] = _clean_bracket_tokens(sequence)
             longest_sequence = max(len(seq.split()) for seq in seq_dict.values())
 
         if self.max_length < longest_sequence:
             # raise warning
-            raise ValueError(
+            print(
                 f"Longest sequence with length {longest_sequence} is longer than the specified max_length {self.max_length} for padding"
             )
+            self.max_length = longest_sequence
         if not padding:
-            return seq_dict
+            return seq_dict, None
         elif self.model_name == "esm2":
             padded_seq_dict = dict()
             for label, sequence in seq_dict.items():
@@ -218,9 +257,9 @@ class BaseEmbedder:
 
         return start, end
 
-    def extract_batch(self, out, representations, batch_labels, batch_sequences):
+    def extract_batch(self, attention_matrices, representations, batch_labels, batch_sequences, pooling_mask = None):
         for method in self.extraction_methods:
-            method(out, representations, batch_labels, batch_sequences)
+            method(attention_matrices, representations, batch_labels, batch_sequences, pooling_mask)
 
     def extract_cdr3(self, out, representations, batch_labels, batch_sequences):
         for i, label in enumerate(batch_labels):
@@ -233,6 +272,18 @@ class BaseEmbedder:
                 for layer in self.layers
             }
 
+    def mask_special_tokens(self, input_tensor, special_tokens=None):
+        """
+        Create a boolean mask for special tokens in the input tensor.
+        
+        """
+        special_tokens = None
+        if special_tokens is not None: # Create a boolean mask: True where the value is not in special_tokens.
+            mask = ~torch.isin(input_tensor, special_tokens)
+        else: # Create a boolean mask: True where the value is not 0, 1, or 2.
+            mask = (input_tensor != 0) & (input_tensor != 1) & (input_tensor != 2)
+        # Convert and return the boolean mask to boolean type.
+        return mask
     def extract_cdr3_unpooled(
         self, out, representations, batch_labels, batch_sequences
     ):
@@ -253,6 +304,7 @@ class BaseEmbedder:
             0
         ]  # get filename without extension and path
         for output_type in self.output_types:
+            print(f"Saving {output_type} representations...")
             if "attention_matrices" not in output_type:
                 for layer in self.layers:
                     output_file_layer = os.path.join(
@@ -265,14 +317,17 @@ class BaseEmbedder:
                         getattr(self, output_type)[layer] = torch.vstack(
                             getattr(self, output_type)[layer]
                         )
+                        stacked = True
                     if self.flatten and "unpooled" in output_type:
                         getattr(self, output_type)[layer] = torch.stack(
                             getattr(self, output_type)[layer], dim=0
                         ).flatten(start_dim=1)
-                    elif not self.discard_padding:
+                        stacked = True
+                    elif not self.discard_padding and not stacked:
                         getattr(self, output_type)[layer] = torch.stack(
                             getattr(self, output_type)[layer]
                         )
+                        stacked = True
                     torch.save((getattr(self, output_type)[layer]), output_file_layer)
                     print(
                         f"Saved {output_type} representation for layer {layer} to {output_file_layer}"
