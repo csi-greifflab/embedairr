@@ -1,12 +1,7 @@
 import os
 import csv
 import torch
-import sys
-import gc
 import re
-from itertools import islice
-
-os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 
 class BaseEmbedder:
@@ -22,7 +17,7 @@ class BaseEmbedder:
         self.max_length = args.max_length
         if torch.cuda.is_available():
             self.device = torch.device("cuda")
-            print("Transferred model to GPU")
+            print(f"Transferred model {self.model_name} to GPU")
         else:
             self.device = torch.device("cpu")
         self.output_types, self.extraction_methods = self.get_output_types(args)
@@ -32,7 +27,9 @@ class BaseEmbedder:
                 self.return_contacts = True
         self.discard_padding = args.discard_padding
         self.flatten = True
-        if (args.extract_embeddings[0] == "false") & (args.extract_cdr3_embeddings[0] == "false"):
+        if (args.extract_embeddings[0] == "false") & (
+            args.extract_cdr3_embeddings[0] == "false"
+        ):
             self.return_embeddings = False
         else:
             self.return_embeddings = True
@@ -43,12 +40,12 @@ class BaseEmbedder:
             if gaps:
                 sequence = sequence.split()
             else:
-                sequence = re.findall(r'<.*?>|.', sequence)
+                sequence = re.findall(r"<.*?>|.", sequence)
             if not set(sequence).issubset(valid_tokens):
                 raise ValueError(
                     f"Invalid tokens in sequence {label}. Please check the alphabet used by the model."
                 )
-            print(f'Processed {i} out of {len(sequences)} sequences', end="\r")
+            print(f"Processed {i + 1} out of {len(sequences)} sequences", end="\r")
 
         print("\nNo invalid tokens in input sequences.")
 
@@ -257,9 +254,22 @@ class BaseEmbedder:
 
         return start, end
 
-    def extract_batch(self, attention_matrices, representations, batch_labels, batch_sequences, pooling_mask = None):
+    def extract_batch(
+        self,
+        attention_matrices,
+        representations,
+        batch_labels,
+        batch_sequences,
+        pooling_mask=None,
+    ):
         for method in self.extraction_methods:
-            method(attention_matrices, representations, batch_labels, batch_sequences, pooling_mask)
+            method(
+                attention_matrices,
+                representations,
+                batch_labels,
+                batch_sequences,
+                pooling_mask,
+            )
 
     def extract_cdr3(self, out, representations, batch_labels, batch_sequences):
         for i, label in enumerate(batch_labels):
@@ -275,15 +285,18 @@ class BaseEmbedder:
     def mask_special_tokens(self, input_tensor, special_tokens=None):
         """
         Create a boolean mask for special tokens in the input tensor.
-        
+
         """
         special_tokens = None
-        if special_tokens is not None: # Create a boolean mask: True where the value is not in special_tokens.
+        if (
+            special_tokens is not None
+        ):  # Create a boolean mask: True where the value is not in special_tokens.
             mask = ~torch.isin(input_tensor, special_tokens)
-        else: # Create a boolean mask: True where the value is not 0, 1, or 2.
+        else:  # Create a boolean mask: True where the value is not 0, 1, or 2.
             mask = (input_tensor != 0) & (input_tensor != 1) & (input_tensor != 2)
         # Convert and return the boolean mask to boolean type.
         return mask
+
     def extract_cdr3_unpooled(
         self, out, representations, batch_labels, batch_sequences
     ):

@@ -1,12 +1,12 @@
 import torch
-import gc
 from transformers import RoFormerTokenizer, RoFormerModel
 from torch.utils.data import DataLoader, TensorDataset
 from embedairr.base_embedder import BaseEmbedder
 import time
 import os
 
-os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+# Set max_split_size_mb
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
 
 
 class Antiberta2Embedder(BaseEmbedder):
@@ -60,6 +60,7 @@ class Antiberta2Embedder(BaseEmbedder):
     def load_data(self):
         """Tokenize sequences and create a DataLoader."""
         # Tokenize sequences
+        print("Tokenizing and batching sequences...")
         tokens = self.tokenizer(
             list(self.sequences_gapped.values()),
             truncation=True,
@@ -76,6 +77,7 @@ class Antiberta2Embedder(BaseEmbedder):
         # Create a dataset and a DataLoader
         dataset = TensorDataset(input_ids, attention_masks)
         data_loader = DataLoader(dataset, batch_size=self.batch_size)
+        print("Finished tokenizing and batching sequences")
 
         return data_loader
 
@@ -263,6 +265,7 @@ class Antiberta2Embedder(BaseEmbedder):
     def embed(self):
         with torch.no_grad():
             for batch_idx, batch in enumerate(self.data_loader):
+                start_time = time.time()
                 print(
                     f"Start embedding batch {batch_idx + 1} of {len(self.data_loader)}"
                 )
@@ -311,10 +314,12 @@ class Antiberta2Embedder(BaseEmbedder):
                     batch_sequences,
                     pooling_mask,
                 )
+                end_time = time.time()
+                sequences_per_second = self.batch_size / (end_time - start_time)
+                estimated_time_remaining = (
+                    len(self.sequences) - len(self.sequence_labels)
+                ) / sequences_per_second
                 print(
-                    f"Processed {self.model_name}: {len(self.sequence_labels)} out of {len(self.sequences)} sequences",
-                    end="\r",
+                    f"Processed {self.model_name}: {len(self.sequence_labels)} out of {len(self.sequences)} sequences ({sequences_per_second:.2f} sequences per second). Estimated time remaining: {estimated_time_remaining:.2f} seconds."
                 )
-
-                gc.collect()
         print("Finished extracting embeddings")

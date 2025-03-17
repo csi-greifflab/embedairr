@@ -1,5 +1,5 @@
 import torch
-import gc
+import time
 from esm import FastaBatchedDataset, pretrained
 from embedairr.base_embedder import BaseEmbedder
 
@@ -61,8 +61,8 @@ class ESM2Embedder(BaseEmbedder):
         return layers
 
     def load_data(self):
-        print("Loading and batching input sequences...")
         # Creating a dataset from the input fasta file
+        print("Tokenizing and batching sequences...")
         dataset = FastaBatchedDataset(
             sequence_strs=self.sequences_padded.values(),
             sequence_labels=self.sequences_padded.keys(),
@@ -75,7 +75,7 @@ class ESM2Embedder(BaseEmbedder):
             collate_fn=self.alphabet.get_batch_converter(),
             batch_sampler=batches,
         )
-        print(f"Read {self.fasta_path} with {len(dataset)} sequences")
+        print("Data loaded")
         return data_loader
 
     def extract_embeddings(
@@ -257,6 +257,7 @@ class ESM2Embedder(BaseEmbedder):
     def embed(self):
         with torch.no_grad():
             for labels, strs, toks in self.data_loader:
+                start_time = time.time()
                 if self.device == torch.device("cuda"):
                     toks = toks.to(device="cuda", non_blocking=True)
                 pooling_mask = self.mask_special_tokens(
@@ -284,10 +285,13 @@ class ESM2Embedder(BaseEmbedder):
                     attention_matrices, representations, labels, strs, pooling_mask
                 )
                 # print total progress
+                end_time = time.time()
+                sequences_per_second = len(labels) / (end_time - start_time)
+                estimated_remaining_time = (
+                    len(self.sequences) - len(self.sequence_labels)
+                ) / sequences_per_second
                 print(
-                    f"{self.model_name}: {len(self.sequence_labels)} sequences of {len(self.sequences)} processed",
-                    end="\r",
+                    f"{self.model_name}: {len(self.sequence_labels)} sequences of {len(self.sequences)} processed ({sequences_per_second:.2f} sequences/s). Estimated remaining time: {estimated_remaining_time:.2f} s"
                 )
-                gc.collect()
 
         print("Finished extracting embeddings")
