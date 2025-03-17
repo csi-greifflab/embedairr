@@ -1,3 +1,9 @@
+.vscode/
+ignore.py
+ignore/
+data/
+tests/
+embedairr/embedairr.py
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
