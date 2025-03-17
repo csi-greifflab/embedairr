@@ -39,7 +39,7 @@ class BaseEmbedder:
 
     def check_input_tokens(self, valid_tokens, sequences, gaps=False):
         print("Checking input sequences for invalid tokens...")
-        for label, sequence in sequences.items():
+        for i, (label, sequence) in enumerate(sequences.items()):
             if gaps:
                 sequence = sequence.split()
             else:
@@ -48,7 +48,9 @@ class BaseEmbedder:
                 raise ValueError(
                     f"Invalid tokens in sequence {label}. Please check the alphabet used by the model."
                 )
-        print("No invalid tokens in input sequences.")
+            print(f'Processed {i} out of {len(sequences)} sequences', end="\r")
+
+        print("\nNo invalid tokens in input sequences.")
 
     def set_output_objects(self):
         """Initialize output objects."""
@@ -270,23 +272,18 @@ class BaseEmbedder:
                 for layer in self.layers
             }
 
-    def mask_special_tokens(self, input_tensor):
+    def mask_special_tokens(self, input_tensor, special_tokens=None):
         """
-        Returns a tensor of the same shape as input_tensor.
-        Each element is set to 0 if its value is 0, 1, or 2, and 1 otherwise.
-        0, 1 and 2 are special tokens ESM2 and AntiBERTa2 library
+        Create a boolean mask for special tokens in the input tensor.
         
-        Args:
-            input_tensor (torch.Tensor): Input tensor.
-        
-        Returns:
-            torch.Tensor: Output tensor with values 0 or 1.
         """
-        # Create a boolean mask: True where the value is not 0, 1, or 2.
-        mask = (input_tensor != 0) & (input_tensor != 1) & (input_tensor != 2)
-        # Convert the boolean mask to integers (True -> 1, False -> 0)
-        return mask.to(device='cpu', dtype=torch.int8)
-    
+        special_tokens = None
+        if special_tokens is not None: # Create a boolean mask: True where the value is not in special_tokens.
+            mask = ~torch.isin(input_tensor, special_tokens)
+        else: # Create a boolean mask: True where the value is not 0, 1, or 2.
+            mask = (input_tensor != 0) & (input_tensor != 1) & (input_tensor != 2)
+        # Convert and return the boolean mask to boolean type.
+        return mask
     def extract_cdr3_unpooled(
         self, out, representations, batch_labels, batch_sequences
     ):

@@ -17,9 +17,19 @@ class ESM2Embedder(BaseEmbedder):
         )
         self.valid_tokens = set(self.alphabet.all_toks)
         self.check_input_tokens(self.valid_tokens, self.sequences)
+        self.special_tokens = self.get_special_tokens()
         self.layers = self.load_layers(self.layers)
         self.data_loader = self.load_data()
         self.set_output_objects()
+
+    def get_special_tokens(self):
+        special_tokens = self.alphabet.all_special_tokens
+        special_token_ids = torch.tensor(
+            [self.alphabet.tok_to_idx[tok] for tok in special_tokens],
+            device=self.device,
+            dtype=torch.int8,
+        )
+        return special_token_ids
 
     def initialize_model(self, model_name="esm2_t33_650M_UR50D"):
         """Initialize the model, tokenizer"""
@@ -68,26 +78,46 @@ class ESM2Embedder(BaseEmbedder):
         print(f"Read {self.fasta_path} with {len(dataset)} sequences")
         return data_loader
 
-    def extract_embeddings(self, attention_matrices, representations, batch_labels, batch_sequences, pooling_mask):
+    def extract_embeddings(
+        self,
+        attention_matrices,
+        representations,
+        batch_labels,
+        batch_sequences,
+        pooling_mask,
+    ):
         for layer in self.layers:
             self.embeddings[layer].extend(
                 [
-                    #representations[layer][
+                    # representations[layer][
                     #    # i, 1 : len(batch_sequences[i].replace("<pad>", ""))
                     #    i, 1 : len(batch_sequences[i]) - batch_sequences[i].count("<pad>") * 5,
-                    #].mean(0)
-                    (pooling_mask[i].unsqueeze(-1) * representations[layer][i]).sum(0)/pooling_mask[i].unsqueeze(-1).sum(0)
+                    # ].mean(0)
+                    (
+                        (pooling_mask[i].unsqueeze(-1) * representations[layer][i]).sum(
+                            0
+                        )
+                        / pooling_mask[i].unsqueeze(-1).sum(0)
+                    ).cpu()
                     for i in range(len(batch_labels))
                 ]
             )
 
     def extract_embeddings_unpooled(
-        self, attention_matrices, representations, batch_labels, batch_sequences, pooling_mask
+        self,
+        attention_matrices,
+        representations,
+        batch_labels,
+        batch_sequences,
+        pooling_mask,
     ):
         if not self.discard_padding:
             for layer in self.layers:
                 self.embeddings_unpooled[layer].extend(
-                    [representations[layer][i][1:] for i in range(len(batch_labels))]
+                    [
+                        representations[layer][i][1:].cpu()
+                        for i in range(len(batch_labels))
+                    ]
                 )
         else:
             for layer in self.layers:
@@ -95,25 +125,39 @@ class ESM2Embedder(BaseEmbedder):
                     [
                         representations[layer][
                             # i, 1 : len(batch_sequences[i].replace("<pad>", ""))
-                            i, 1 : ] # remove CLS token
+                            i,
+                            1:,
+                        ].cpu()  # remove CLS token
                         for i in range(len(batch_labels))
                     ]
                 )
 
     def extract_attention_matrices_all_heads(
-        self, attention_matrices, representations, batch_labels, batch_sequences, pooling_mask
+        self,
+        attention_matrices,
+        representations,
+        batch_labels,
+        batch_sequences,
+        pooling_mask,
     ):
         for layer in self.layers:
             for head in range(self.num_heads):
                 self.attention_matrices_all_heads[layer][head].extend(
                     [
-                        attention_matrices[i, layer - 1, head, 1:, 1:].cpu() # remove CLS token
+                        attention_matrices[i, layer - 1, head, 1:, 1:].to(
+                            device="cpu", dtype=torch.float16
+                        )  # remove CLS token
                         for i in range(len(batch_labels))
                     ]
                 )
 
     def extract_attention_matrices_average_layer(
-        self, attention_matrices, representations, batch_labels, batch_sequences, pooling_mask
+        self,
+        attention_matrices,
+        representations,
+        batch_labels,
+        batch_sequences,
+        pooling_mask,
     ):
         # Directly append new batch matrices to the existing lists
         for layer in self.layers:
@@ -121,20 +165,24 @@ class ESM2Embedder(BaseEmbedder):
             # Append the new batch to the existing list
             self.attention_matrices_average_layers[layer].extend(
                 [
-                    attention_matrices[i, layer - 1, :, 1:, 1:] # remove CLS token
+                    attention_matrices[i, layer - 1, :, 1:, 1:]  # remove CLS token
                     .mean(0)
-                    .to(torch.float16)
-                    .cpu()
+                    .to(device="cpu", dtype=torch.float16)
                     for i in range(len(batch_labels))
                 ]
             )
 
     def extract_attention_matrices_average_all(
-        self, attention_matrices, representations, batch_labels, batch_sequences, pooling_mask
+        self,
+        attention_matrices,
+        representations,
+        batch_labels,
+        batch_sequences,
+        pooling_mask,
     ):
         self.attention_matrices_average_all.extend(
             [
-                attention_matrices[i, :, :, 1:, 1:] # remove CLS token
+                attention_matrices[i, :, :, 1:, 1:]  # remove CLS token
                 .mean(dim=(0, 1))
                 .to(device="cpu", dtype=torch.float16)
                 for i in range(len(batch_labels))
@@ -142,7 +190,12 @@ class ESM2Embedder(BaseEmbedder):
         )
 
     def extract_cdr3_attention_matrices_all_heads(
-        self, attention_matrices, representations, batch_labels, batch_sequences, pooling_mask
+        self,
+        attention_matrices,
+        representations,
+        batch_labels,
+        batch_sequences,
+        pooling_mask,
     ):
         for layer in self.layers:
             for head in range(self.num_heads):
@@ -151,35 +204,53 @@ class ESM2Embedder(BaseEmbedder):
                     self.cdr3_attention_matrices_all_heads[layer][head].extend(
                         [
                             attention_matrices[
-                                i, layer - 1, head, start+1:end+1, start+1:end+1
-                            ].cpu()
+                                i,
+                                layer - 1,
+                                head,
+                                start + 1 : end + 1,
+                                start + 1 : end + 1,
+                            ].to(device="cpu", dtype=torch.float16)
                         ]
                     )
 
     def extract_cdr3_attention_matrices_average_layer(
-        self, attention_matrices, representations, batch_labels, batch_sequences, pooling_mask
+        self,
+        attention_matrices,
+        representations,
+        batch_labels,
+        batch_sequences,
+        pooling_mask,
     ):
         for layer in self.layers:
             for i, label in enumerate(batch_labels):
                 start, end = self.get_cdr3_positions(label)
                 self.cdr3_attention_matrices_average_layers[layer].extend(
                     [
-                        attention_matrices[i, layer - 1, :, start+1:end+1, start+1:end+1]
+                        attention_matrices[
+                            i, layer - 1, :, start + 1 : end + 1, start + 1 : end + 1
+                        ]
                         .mean(0)
-                        .cpu()
+                        .to(device="cpu", dtype=torch.float16)
                     ]
                 )
 
     def extract_cdr3_attention_matrices_average_all(
-        self, attention_matrices, representations, batch_labels, batch_sequences, pooling_mask
+        self,
+        attention_matrices,
+        representations,
+        batch_labels,
+        batch_sequences,
+        pooling_mask,
     ):
         for i, label in enumerate(batch_labels):
             start, end = self.get_cdr3_positions(label)
             self.cdr3_attention_matrices_average_all.extend(
                 [
-                    attention_matrices[i, :, :, start+1:end+1, start+1:end+1]
+                    attention_matrices[
+                        i, :, :, start + 1 : end + 1, start + 1 : end + 1
+                    ]
                     .mean(dim=(0, 1))
-                    .cpu()
+                    .to(device="cpu", dtype=torch.float16)
                 ]
             )
 
@@ -188,24 +259,30 @@ class ESM2Embedder(BaseEmbedder):
             for labels, strs, toks in self.data_loader:
                 if self.device == torch.device("cuda"):
                     toks = toks.to(device="cuda", non_blocking=True)
-                pooling_mask = self.mask_special_tokens(toks) # mask special tokens to avoid diluting signal when pooling embeddings
+                pooling_mask = self.mask_special_tokens(
+                    toks, self.special_tokens
+                )  # mask special tokens to avoid diluting signal when pooling embeddings
                 outputs = self.model(
                     toks, repr_layers=self.layers, return_contacts=self.return_contacts
                 )
                 if self.return_contacts:
-                    attention_matrices = outputs["attentions"] # stack attention matrices across layers
+                    attention_matrices = outputs[
+                        "attentions"
+                    ]  # stack attention matrices across layers
                 else:
                     attention_matrices = None
                 # Extracting layer representations and moving them to CPU
-                if self.extract_embeddings:
+                if self.return_embeddings:
                     representations = {
-                        layer: t.to(device="cpu", dtype=torch.float16)
+                        layer: t.to(dtype=torch.float16)
                         for layer, t in outputs["representations"].items()
                     }
                 else:
                     representations = None
                 self.sequence_labels.extend(labels)
-                self.extract_batch(attention_matrices, representations, labels, strs, pooling_mask)
+                self.extract_batch(
+                    attention_matrices, representations, labels, strs, pooling_mask
+                )
                 # print total progress
                 print(
                     f"{self.model_name}: {len(self.sequence_labels)} sequences of {len(self.sequences)} processed",
