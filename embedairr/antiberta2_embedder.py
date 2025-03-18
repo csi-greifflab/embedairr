@@ -15,9 +15,14 @@ class Antiberta2Embedder(BaseEmbedder):
         self.sequences_gapped, self.sequences = self.fasta_to_dict(
             args.fasta_path, gaps=True
         )
-        self.model, self.tokenizer, self.num_heads, self.num_layers = (
-            self.initialize_model("alchemab/antiberta2-cssp")
-        )
+        self.num_sequences = len(self.sequences_gapped)
+        (
+            self.model,
+            self.tokenizer,
+            self.num_heads,
+            self.num_layers,
+            self.embedding_size,
+        ) = self.initialize_model("alchemab/antiberta2-cssp")
         self.valid_tokens = set(self.tokenizer.get_vocab().keys())
         self.check_input_tokens(self.valid_tokens, self.sequences_gapped, gaps=True)
         self.special_tokens = torch.tensor(
@@ -30,6 +35,7 @@ class Antiberta2Embedder(BaseEmbedder):
             for sequence_id, sequence_aa in self.sequences_gapped.items()
         }
         self.set_output_objects()
+        pass
 
     def initialize_model(self, model_name="alchemab/antiberta2-cssp"):
         """Initialize the model, tokenizer, and device."""
@@ -38,9 +44,12 @@ class Antiberta2Embedder(BaseEmbedder):
         tokenizer = RoFormerTokenizer.from_pretrained(model_name)
         model = RoFormerModel.from_pretrained(model_name).to(device)
         model.eval()
+        # disable eos and bos
+        model.config
         num_heads = model.encoder.layer[0].attention.self.num_attention_heads
         num_layers = len(model.encoder.layer)
-        return model, tokenizer, num_heads, num_layers
+        embedding_size = model.config.hidden_size
+        return model, tokenizer, num_heads, num_layers, embedding_size
 
     def load_layers(self, layers):
         """Check if the specified representation layers are valid."""
@@ -66,8 +75,8 @@ class Antiberta2Embedder(BaseEmbedder):
             truncation=True,
             padding="max_length",
             return_tensors="pt",
-            add_special_tokens=True,
-            max_length=self.max_length + 2,  # accomodate for special tokens,
+            add_special_tokens=False,  # TODO make it optional
+            max_length=self.max_length,
         )
 
         # Extract input_ids and attention masks directly from the tokens
@@ -80,187 +89,6 @@ class Antiberta2Embedder(BaseEmbedder):
         print("Finished tokenizing and batching sequences")
 
         return data_loader
-
-    def extract_embeddings(
-        self,
-        attention_matrices,
-        representations,
-        batch_labels,
-        batch_sequences,
-        pooling_mask,
-    ):
-        for layer in self.layers:
-            self.embeddings[layer].extend(
-                [
-                    # representations[layer][
-                    #    i, 1 : len(batch_sequences[i].replace("[SEP]", " "))
-                    # ].mean(0)
-                    (
-                        (pooling_mask[i].unsqueeze(-1) * representations[layer][i]).sum(
-                            0
-                        )
-                        / pooling_mask[i].unsqueeze(-1).sum(0)
-                    ).cpu()
-                    for i in range(len(batch_labels))
-                ]
-            )
-
-    def extract_embeddings_unpooled(
-        self,
-        attention_matrices,
-        representations,
-        batch_labels,
-        batch_sequences,
-        pooling_mask,
-    ):
-        if not self.discard_padding:
-            for layer in self.layers:
-                self.embeddings_unpooled[layer].extend(
-                    [
-                        representations[layer][i][1:].cpu()
-                        for i in range(len(batch_labels))
-                    ]  # remove CLS token
-                )
-        else:
-            for layer in self.layers:
-                self.embeddings_unpooled[layer].extend(
-                    [
-                        representations[layer][i, 1:].cpu()  # remove CLS token
-                        for i in range(len(batch_labels))
-                    ]
-                )
-
-    def extract_attention_matrices_all_heads(
-        self,
-        attention_matrices,
-        representations,
-        batch_labels,
-        batch_sequences,
-        pooling_mask,
-    ):
-        for layer in self.layers:
-            for head in range(self.num_heads):
-                self.attention_matrices_all_heads[layer][head].extend(
-                    [
-                        attention_matrices[
-                            layer - 1, i, head, 1:, 1:
-                        ]  # remove CLS token
-                        .cpu()
-                        .to(dtype=torch.float16)
-                        for i in range(len(batch_labels))
-                    ]
-                )
-
-    def extract_attention_matrices_average_layer(
-        self,
-        attention_matrices,
-        representations,
-        batch_labels,
-        batch_sequences,
-        pooling_mask,
-    ):
-        for layer in self.layers:
-            self.attention_matrices_average_layers[layer].extend(
-                [
-                    attention_matrices[layer - 1, i, :, 1:, 1:]  # remove CLS token
-                    .mean(0)
-                    .to(device="cpu", dtype=torch.float16)  # average over heads
-                    for i in range(len(batch_labels))
-                ]
-            )
-
-    def extract_attention_matrices_average_all(
-        self,
-        attention_matrices,
-        representations,
-        batch_labels,
-        batch_sequences,
-        pooling_mask,
-    ):
-        self.attention_matrices_average_all.extend(
-            [
-                # torch.stack(
-                #    [
-                #        attention_matrices[layer - 1, i, :, 1:-1, 1:-1]
-                #        .mean(dim=0)
-                #        .to(dtype=torch.float16)  # average over heads
-                #        for layer in self.layers
-                #    ]
-                # ).mean(
-                #    dim=0
-                # ) # average over layers
-                attention_matrices[:, i, :]
-                .mean(dim=(0, 1))
-                .to(device="cpu", dtype=torch.float16)
-                for i in range(len(batch_labels))
-            ]
-        )
-
-    def extract_cdr3_attention_matrices_all_heads(
-        self,
-        attention_matrices,
-        representations,
-        batch_labels,
-        batch_sequences,
-        pooling_mask,
-    ):
-        for layer in self.layers:
-            for head in range(self.num_heads):
-                for i, label in enumerate(batch_labels):
-                    start, end = self.get_cdr3_positions(label)
-                    self.cdr3_attention_matrices_all_heads[layer][head].extend(
-                        [
-                            attention_matrices[
-                                layer - 1,
-                                i,
-                                head,
-                                start + 1 : end + 1,
-                                start + 1 : end + 1,
-                            ].to(device="cpu", dtype=torch.float16)
-                        ]
-                    )
-
-    def extract_cdr3_attention_matrices_average_layer(
-        self,
-        attention_matrices,
-        representations,
-        batch_labels,
-        batch_sequences,
-        pooling_mask,
-    ):
-        for layer in self.layers:
-            for i, label in enumerate(batch_labels):
-                start, end = self.get_cdr3_positions(label)
-                self.cdr3_attention_matrices_average_layers[layer].extend(
-                    [
-                        attention_matrices[
-                            layer - 1, i, :, start + 1 : end, start + 1 : end + 1
-                        ]
-                        .mean(0)
-                        .to(device="cpu", dtype=torch.float16)
-                    ]
-                )
-
-    def extract_cdr3_attention_matrices_average_all(
-        self,
-        attention_matrices,
-        representations,
-        batch_labels,
-        batch_sequences,
-        pooling_mask,
-    ):
-        for i, label in enumerate(batch_labels):
-            start, end = self.get_cdr3_positions(label)
-            self.cdr3_attention_matrices_average_all.extend(
-                [
-                    attention_matrices[
-                        layer - 1, i, :, start + 1 : end + 1, start + 1 : end + 1
-                    ]
-                    .mean(dim=(0, 1))
-                    .to(device="cpu", dtype=torch.float16)
-                    for layer in self.layers
-                ]
-            )
 
     def embed(self):
         with torch.no_grad():
@@ -290,8 +118,8 @@ class Antiberta2Embedder(BaseEmbedder):
                     output_attentions=self.return_contacts,
                 )
                 if self.return_contacts:
-                    attention_matrices = torch.stack(
-                        outputs.attentions
+                    attention_matrices = torch.stack(outputs.attentions).to(
+                        dtype=torch.float16
                     )  # stack attention matrices across layers
                 else:
                     attention_matrices = None
@@ -313,6 +141,7 @@ class Antiberta2Embedder(BaseEmbedder):
                     labels,
                     batch_sequences,
                     pooling_mask,
+                    batch_idx,
                 )
                 end_time = time.time()
                 sequences_per_second = self.batch_size / (end_time - start_time)
