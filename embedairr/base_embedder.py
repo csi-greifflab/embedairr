@@ -9,8 +9,12 @@ import mmap
 class BaseEmbedder:
     def __init__(self, args):
         self.fasta_path = args.fasta_path
-        self.model_name = args.model_name
-        self.output_path = args.output_path
+        self.model_link = args.model_name
+        self.model_name = re.sub(r"^.*?/", "", self.model_link)
+        self.output_path = os.path.join(args.output_path, self.model_name)
+        # Check if output directory exists and creates it if it's missing
+        if not os.path.exists(self.output_path):
+            os.makedirs(self.output_path)
         self.output_prefix = os.path.splitext(os.path.basename(self.fasta_path))[
             0
         ]  # get filename without extension and path
@@ -48,6 +52,8 @@ class BaseEmbedder:
             else:
                 sequence = re.findall(r"<.*?>|.", sequence)
             if not set(sequence).issubset(valid_tokens):
+                # find invalid tokens
+                invalid_tokens = set(sequence) - valid_tokens
                 raise ValueError(
                     f"Invalid tokens in sequence {label}. Please check the alphabet used by the model."
                 )
@@ -61,23 +67,19 @@ class BaseEmbedder:
         self.embeddings = {
             "output_data": {layer: [] for layer in self.layers},
             "method": self.extract_embeddings,
-            "output_dir": os.path.join(self.output_path, self.model_name, "embeddings"),
+            "output_dir": os.path.join(self.output_path, "embeddings"),
             "shape": (self.num_sequences, self.embedding_size),
         }
         self.embeddings_unpooled = {
             "output_data": {layer: [] for layer in self.layers},
             "method": self.extract_embeddings_unpooled,
-            "output_dir": os.path.join(
-                self.output_path, self.model_name, "embeddings_unpooled"
-            ),
+            "output_dir": os.path.join(self.output_path, "embeddings_unpooled"),
             "shape": (self.num_sequences, self.max_length, self.embedding_size),
         }
         self.cdr3_extracted = {
             "output_data": {layer: [] for layer in self.layers},
             "method": self.extract_cdr3,
-            "output_dir": os.path.join(
-                self.output_path, self.model_name, "cdr3_extracted"
-            ),
+            "output_dir": os.path.join(self.output_path, "cdr3_extracted"),
             "shape": (self.num_sequences, self.embedding_size),
         }
         self.attention_matrices_all_heads = {
@@ -87,7 +89,7 @@ class BaseEmbedder:
             },
             "method": self.extract_attention_matrices_all_heads,
             "output_dir": os.path.join(
-                self.output_path, self.model_name, "attention_matrices_all_heads"
+                self.output_path, "attention_matrices_all_heads"
             ),
             "shape": (self.num_sequences, self.max_length, self.max_length),
             "shape_flattened": (self.num_sequences, self.max_length**2),
@@ -96,7 +98,7 @@ class BaseEmbedder:
             "output_data": {layer: [] for layer in self.layers},
             "method": self.extract_attention_matrices_average_layer,
             "output_dir": os.path.join(
-                self.output_path, self.model_name, "attention_matrices_average_layers"
+                self.output_path, "attention_matrices_average_layers"
             ),
             "shape": (self.num_sequences, self.max_length, self.max_length),
             "shape_flattened": (self.num_sequences, self.max_length**2),
@@ -105,7 +107,7 @@ class BaseEmbedder:
             "output_data": [],
             "method": self.extract_attention_matrices_average_all,
             "output_dir": os.path.join(
-                self.output_path, self.model_name, "attention_matrices_average_all"
+                self.output_path, "attention_matrices_average_all"
             ),
             "shape": (self.num_sequences, self.max_length, self.max_length),
             "shape_flattened": (self.num_sequences, self.max_length**2),
@@ -115,7 +117,6 @@ class BaseEmbedder:
             "method": self.extract_cdr3_attention_matrices_average_layer,
             "output_dir": os.path.join(
                 self.output_path,
-                self.model_name,
                 "cdr3_attention_matrices_average_layers",
             ),
             "shape": (self.num_sequences, self.max_length, self.max_length),
@@ -125,7 +126,7 @@ class BaseEmbedder:
             "output_data": [],
             "method": self.extract_cdr3_attention_matrices_average_all,
             "output_dir": os.path.join(
-                self.output_path, self.model_name, "cdr3_attention_matrices_average_all"
+                self.output_path, "cdr3_attention_matrices_average_all"
             ),
             "shape": (self.num_sequences, self.max_length, self.max_length),
             "shape_flattened": (self.num_sequences, self.max_length**2),
@@ -198,7 +199,7 @@ class BaseEmbedder:
                         # Save it to disk
                         with open(output_file, "wb") as f:
                             f.truncate(expected_size)
-        elif "cdr3" not in output_type:
+        elif "cdr3_attention_matrices" not in output_type:
             shape = getattr(self, output_type)["shape"]
             numel = np.prod(shape)  # Total number of elements
             expected_size = numel * element_size
@@ -210,9 +211,9 @@ class BaseEmbedder:
                 # Save it to disk
                 with open(output_file_layer, "wb") as f:
                     f.truncate(expected_size)
-        else:  # TODO implement for cdr3 outputs
+        else:
             raise ValueError(
-                "--batch_writing has not been implemented for CDR3 outputs yet."
+                f"Output type {output_type} not recognized. Please choose from: 'embeddings', 'embeddings_unpooled', 'attention_matrices_all_heads', 'attention_matrices_average_layers', 'attention_matrices_average_all', 'cdr3_extracted'"
             )
         print(f"Preallocated disk space for {output_type}")
 
@@ -230,7 +231,9 @@ class BaseEmbedder:
                 return
             seq = "".join(sequence_aa)
             if gaps:
-                seq_dict[sequence_id] = " ".join(seq)
+                seq_dict[sequence_id] = " ".join(
+                    re.findall(r"\[.*?\]|.", seq)
+                )  # split sequences by space except for special tokens in brackets
             else:
                 seq_dict[sequence_id] = seq
             sequence_id = None
@@ -268,7 +271,7 @@ class BaseEmbedder:
             self.max_length = longest_sequence
         if not padding:
             return seq_dict, None
-        elif self.model_name == "esm2":
+        else:
             padded_seq_dict = dict()
             for label, sequence in seq_dict.items():
                 if len(sequence) < self.max_length:
@@ -372,37 +375,25 @@ class BaseEmbedder:
         batch_idx,
     ):
         for layer in self.layers:
+            tensor = torch.stack(
+                [
+                    (
+                        (pooling_mask[i].unsqueeze(-1) * representations[layer][i]).sum(
+                            0
+                        )
+                        / pooling_mask[i].unsqueeze(-1).sum(0)
+                    )
+                    for i in range(len(batch_labels))
+                ]
+            )
             if self.batch_writing:
                 output_file = os.path.join(
                     self.embeddings["output_dir"],
                     f"{self.output_prefix}_{self.model_name}_embeddings_layer_{layer}.pt",
                 )
-                tensor = torch.stack(
-                    [
-                        (
-                            (
-                                pooling_mask[i].unsqueeze(-1)
-                                * representations[layer][i]
-                            ).sum(0)
-                            / pooling_mask[i].unsqueeze(-1).sum(0)
-                        ).cpu()
-                        for i in range(len(batch_labels))
-                    ]
-                )
                 self.write_batch_to_disk(output_file, tensor, batch_idx)
             else:
-                self.embeddings["output_data"][layer].extend(
-                    [
-                        (
-                            (
-                                pooling_mask[i].unsqueeze(-1)
-                                * representations[layer][i]
-                            ).sum(0)
-                            / pooling_mask[i].unsqueeze(-1).sum(0)
-                        ).cpu()
-                        for i in range(len(batch_labels))
-                    ]
-                )
+                self.embeddings["output_data"][layer].extend(tensor.cpu())
 
     def extract_embeddings_unpooled(
         self,
@@ -415,25 +406,17 @@ class BaseEmbedder:
     ):
         if not self.discard_padding:
             for layer in self.layers:
+                tensor = torch.stack(
+                    [representations[layer][i] for i in range(len(batch_labels))]
+                )
                 if self.batch_writing:
                     output_file = os.path.join(
                         self.embeddings_unpooled["output_dir"],
                         f"{self.output_prefix}_{self.model_name}_embeddings_unpooled_layer_{layer}.pt",
                     )
-                    tensor = torch.stack(
-                        [
-                            representations[layer][i].cpu()
-                            for i in range(len(batch_labels))
-                        ]
-                    )
                     self.write_batch_to_disk(output_file, tensor, batch_idx)
                 else:
-                    self.embeddings_unpooled["output_data"][layer].extend(
-                        [
-                            representations[layer][i].cpu()
-                            for i in range(len(batch_labels))
-                        ]
-                    )
+                    self.embeddings_unpooled["output_data"][layer].extend(tensor.cpu())
         else:  # TODO remove padding tokens
             print("Feature not implemented yet")
             pass
@@ -455,7 +438,7 @@ class BaseEmbedder:
             for head in range(self.num_heads):
                 tensor = torch.stack(
                     [
-                        attention_matrices[layer - 1, i, head].cpu()
+                        attention_matrices[layer - 1, i, head]
                         for i in range(len(batch_labels))
                     ]
                 )
@@ -470,7 +453,7 @@ class BaseEmbedder:
                 else:
                     self.attention_matrices_all_heads["output_data"][layer][
                         head
-                    ].extend(tensor)
+                    ].extend(tensor.cpu())
 
     def extract_attention_matrices_average_layer(
         self,
@@ -484,7 +467,7 @@ class BaseEmbedder:
         for layer in self.layers:
             tensor = torch.stack(
                 [
-                    attention_matrices[layer - 1, i].mean(0).cpu()
+                    attention_matrices[layer - 1, i].mean(0)
                     for i in range(len(batch_labels))
                 ]
             )
@@ -498,7 +481,7 @@ class BaseEmbedder:
                 self.write_batch_to_disk(output_file, tensor, batch_idx)
             else:
                 self.attention_matrices_average_layers["output_data"][layer].extend(
-                    tensor
+                    tensor.cpu()
                 )
 
     def extract_attention_matrices_average_all(
@@ -512,7 +495,7 @@ class BaseEmbedder:
     ):
         tensor = torch.stack(
             [
-                attention_matrices[:, i].mean(dim=(0, 1)).cpu()
+                attention_matrices[:, i].mean(dim=(0, 1))
                 for i in range(len(batch_labels))
             ]
         )
@@ -525,7 +508,31 @@ class BaseEmbedder:
             )
             self.write_batch_to_disk(output_file, tensor, batch_idx)
         else:
-            self.attention_matrices_average_all["output_data"].extend(tensor)
+            self.attention_matrices_average_all["output_data"].extend(tensor.cpu())
+
+    def extract_cdr3_attention_matrices_average_all_heads(
+        self,
+        attention_matrices,
+        representations,
+        batch_labels,
+        batch_sequences,
+        pooling_mask,
+        batch_idx,
+    ):
+        for layer in self.layers:
+            for head in range(self.num_heads):
+                tensor = []
+                for i, label in enumerate(batch_labels):
+                    start, end = self.get_cdr3_positions(label)
+                    tensor.extend(
+                        attention_matrices[
+                            layer - 1, i, head, start:end, start:end
+                        ].mean(0)
+                    )
+                tensor = torch.stack(tensor)
+                self.cdr3_attention_matrices_all_heads["output_data"][layer][
+                    head
+                ].extend(tensor.cpu())
 
     def extract_cdr3_attention_matrices_average_layer(
         self,
@@ -537,31 +544,16 @@ class BaseEmbedder:
         batch_idx,
     ):
         for layer in self.layers:
+            tensor = []
             for i, label in enumerate(batch_labels):
                 start, end = self.get_cdr3_positions(label)
-                if self.batch_writing:
-                    output_file = os.path.join(
-                        self.cdr3_attention_matrices_average_layers["output_dir"],
-                        f"{self.output_prefix}_{self.model_name}_cdr3_attention_matrices_average_layers_layer_{layer}.pt",
-                    )
-                    tensor = torch.stack(
-                        [
-                            attention_matrices[layer - 1, i, :, start:end, start:end]
-                            .mean(0)
-                            .cpu()
-                        ]
-                    )
-                    self.write_batch_to_disk(output_file, tensor, batch_idx)
-                else:
-                    self.cdr3_attention_matrices_average_layers["output_data"][
-                        layer
-                    ].extend(
-                        [
-                            attention_matrices[layer - 1, i, :, start:end, start:end]
-                            .mean(0)
-                            .cpu()
-                        ]
-                    )
+                tensor.extend(
+                    attention_matrices[layer - 1, i, :, start:end, start:end].mean(0)
+                )
+                tensor = torch.stack(tensor)
+                self.cdr3_attention_matrices_average_layers["output_data"][
+                    layer
+                ].extend(tensor.cpu())
 
     def extract_cdr3_attention_matrices_average_all(
         self,
@@ -572,48 +564,52 @@ class BaseEmbedder:
         pooling_mask,
         batch_idx,
     ):
+        tensor = []
         for i, label in enumerate(batch_labels):
             start, end = self.get_cdr3_positions(label)
-            if self.bach_writing:
-                output_file = os.path.join(
-                    self.cdr3_attention_matrices_average_all["output_dir"],
-                    f"{self.output_prefix}_{self.model_name}_cdr3_attention_matrices_average_all.pt",
+            tensor.extend(
+                attention_matrices[:, i, :, start:end, start:end].mean(dim=(0, 1))
+            )
+        tensor = torch.stack(tensor)
+        self.cdr3_attention_matrices_average_all["output_data"].extend(tensor.cpu())
+
+    def extract_cdr3(
+        self,
+        attention_matrices,
+        representations,
+        batch_labels,
+        batch_sequences,
+        pooling_mask,
+        batch_idx,
+    ):
+        for layer in self.layers:
+            tensor = []
+            for i, label in enumerate(batch_labels):
+                start, end = self.get_cdr3_positions(label, context=self.context)
+                tensor.extend(
+                    (
+                        pooling_mask[i, start:end].unsqueeze(-1)
+                        * representations[layer, i, start:end]
+                    ).sum(0)
+                    / pooling_mask[i, start:end].unsqueeze(-1).sum(0)
                 )
-                tensor = torch.stack(
-                    attention_matrices[:, i, :, start:end, start:end]
-                    .mean(dim=(0, 1))
-                    .cpu()
+            tensor = torch.stack(tensor)
+            if self.batch_writing:
+                output_file = os.path.join(
+                    self.cdr3_extracted["output_dir"],
+                    f"{self.output_prefix}_{self.model_name}_cdr3_extracted_layer_{layer}.pt",
                 )
                 self.write_batch_to_disk(output_file, tensor, batch_idx)
             else:
-                self.cdr3_attention_matrices_average_all["output_data"].extend(
-                    attention_matrices[:, i, :, start:end, start:end]
-                    .mean(dim=(0, 1))
-                    .cpu()
-                )
-
-    def extract_cdr3(self, out, representations, batch_labels, batch_sequences):
-        for i, label in enumerate(batch_labels):
-            start, end = self.get_cdr3_positions(label, context=self.context)
-            self.cdr3_extracted = {
-                layer: (
-                    self.cdr3_extracted[layer]
-                    + [representations[layer][i, start:end].mean(0)]
-                )
-                for layer in self.layers
-            }
+                self.cdr3_extracted = {tensor.cpu()}
 
     def write_batch_to_disk(self, file_path, tensor, batch_idx):
         with open(file_path, "r+b") as f:
             mmapped_file = mmap.mmap(f.fileno(), length=0, access=mmap.ACCESS_WRITE)
             offset = batch_idx * tensor.element_size() * tensor.shape[0]
             mmapped_file.seek(offset)
-            mmapped_file.write(tensor.numpy().tobytes())
+            mmapped_file.write(tensor.cpu().numpy().tobytes())
             mmapped_file.flush()
-            # f.seek(
-            #    batch_idx * tensor.element_size() * tensor.shape[0]
-            # )  # Seek to correct position
-            # f.write(tensor.numpy().tobytes())
 
     def export_to_disk(self):
         """Stack representations of each layer into a single tensor and save to output file."""
@@ -733,9 +729,7 @@ class BaseEmbedder:
 
     def create_output_dirs(self):
         for output_type in self.output_types:
-            output_type_path = os.path.join(
-                self.output_path, self.model_name, output_type
-            )
+            output_type_path = os.path.join(self.output_path, output_type)
             if not os.path.exists(output_type_path):
                 os.makedirs(output_type_path)
 

@@ -20,12 +20,12 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="Input path")
     parser.add_argument(
         "--model_name",
-        type=str.lower,
+        type=str,
         required=True,
         help="Model name. Example: esm2_t33_650M_UR50D",
     )
     parser.add_argument(
-        "--fasta_path", type=str.lower, required=True, help="Fasta path + filename.fa"
+        "--fasta_path", type=str, required=True, help="Fasta path + filename.fa"
     )
     parser.add_argument(
         "--output_path",
@@ -98,9 +98,7 @@ def parse_arguments():
     )
     parser.add_argument(
         "--batch_writing",
-        type=str2bool,
-        nargs="?",
-        const=True,
+        action="store_true",
         default=True,
         help="Preallocate output files and wWrite embeddings to disk in batches. Default is True.",
     )
@@ -114,14 +112,10 @@ def main():
     # Parse and store arguments
 
     args = parse_arguments()
-    if args.batch_writing and args.cdr3_path is not None:
+    if args.batch_writing and args.extract_cdr3_attention_matrices != "false":
         raise ValueError(
-            "Batch writing is not supported with CDR3 embeddings. Set '--batch_writing False' to disable."
+            "Batch writing is not supported with CDR3 attention matrices. Set '--batch_writing False' to disable."
         )
-
-    # Check if output directory exists and creates it if it's missing
-    if not os.path.exists(args.output_path):
-        os.makedirs(args.output_path)
 
     embedder = select_model(args.model_name)
 

@@ -6,7 +6,7 @@ from embedairr.base_embedder import BaseEmbedder
 # torch.set_default_dtype(torch.float16)
 
 
-class ESM2Embedder(BaseEmbedder):
+class ESMEmbedder(BaseEmbedder):
     def __init__(self, args):
         super().__init__(args)
         self.sequences, self.sequences_padded = self.fasta_to_dict(
@@ -19,7 +19,7 @@ class ESM2Embedder(BaseEmbedder):
             self.num_heads,
             self.num_layers,
             self.embedding_size,
-        ) = self.initialize_model()
+        ) = self.initialize_model(self.model_name)
         self.valid_tokens = set(self.alphabet.all_toks)
         self.check_input_tokens(self.valid_tokens, self.sequences)
         self.special_tokens = self.get_special_tokens()
@@ -36,32 +36,6 @@ class ESM2Embedder(BaseEmbedder):
             dtype=torch.int8,
         )
         return special_token_ids
-
-    def initialize_model(self, model_name="esm2_t33_650M_UR50D"):
-        """Initialize the model, tokenizer"""
-        #  Loading the pretrained model and alphabet for tokenization
-        print("Loading model...")
-        # model, alphabet = pretrained.load_model_and_alphabet(model_name)
-        model, alphabet = pretrained.esm2_t33_650M_UR50D()
-        model.eval()  # Setting the model to evaluation mode
-        model.append_eos = (
-            False  # Removing the end of sequence token TODO make it optional
-        )
-        model.prepend_bos = (
-            False  # Removing the beginning of sequence token TODO make it optional
-        )
-
-        num_heads = model.layers[0].self_attn.num_heads
-        num_layers = len(model.layers)
-        embedding_size = model.embed_dim
-
-        # Moving the model to GPU if available for faster processing
-        if torch.cuda.is_available():
-            model = model.cuda()
-            print("Transferred model to GPU")
-        else:
-            print("No GPU available, using CPU")
-        return model, alphabet, num_heads, num_layers, embedding_size
 
     def load_layers(self, layers):
         # Checking if the specified representation layers are valid
@@ -143,3 +117,65 @@ class ESM2Embedder(BaseEmbedder):
                 )
 
         print("Finished extracting embeddings")
+
+
+class ESM1Embedder(ESMEmbedder):
+    def __init__(self, args):
+        super().__init__(args)
+
+    def initialize_model(self, model_name):
+        """Initialize the model, tokenizer"""
+        #  Loading the pretrained model and alphabet for tokenization
+        print("Loading model...")
+        # model, alphabet = pretrained.load_model_and_alphabet(model_name)
+        model, alphabet = pretrained.load_model_and_alphabet_hub(model_name)
+        model.eval()  # Setting the model to evaluation mode
+        model.append_eos = (
+            False  # Removing the end of sequence token TODO make it optional
+        )
+        model.prepend_bos = (
+            False  # Removing the beginning of sequence token TODO make it optional
+        )
+
+        num_heads = model.layers[0].self_attn.num_heads
+        num_layers = len(model.layers)
+        embedding_size = model.embed_tokens.embedding_dim
+
+        # Moving the model to GPU if available for faster processing
+        if torch.cuda.is_available():
+            model = model.cuda()
+            print("Transferred model to GPU")
+        else:
+            print("No GPU available, using CPU")
+        return model, alphabet, num_heads, num_layers, embedding_size
+
+
+class ESM2Embedder(ESMEmbedder):
+    def __init__(self, args):
+        super().__init__(args)
+
+    def initialize_model(self, model_name):
+        """Initialize the model, tokenizer"""
+        #  Loading the pretrained model and alphabet for tokenization
+        print("Loading model...")
+        # model, alphabet = pretrained.load_model_and_alphabet(model_name)
+        model, alphabet = pretrained.load_model_and_alphabet_hub(model_name)
+        model.eval()  # Setting the model to evaluation mode
+        model.append_eos = (
+            False  # Removing the end of sequence token TODO make it optional
+        )
+        model.prepend_bos = (
+            False  # Removing the beginning of sequence token TODO make it optional
+        )
+
+        num_heads = model.layers[0].self_attn.num_heads
+        num_layers = len(model.layers)
+        embedding_size = model.embed_dim
+
+        # Moving the model to GPU if available for faster processing
+        if torch.cuda.is_available():
+            model = model.cuda()
+            print("Transferred model to GPU")
+        else:
+            print("No GPU available, using CPU")
+        return model, alphabet, num_heads, num_layers, embedding_size
