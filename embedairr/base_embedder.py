@@ -10,6 +10,7 @@ class BaseEmbedder:
     def __init__(self, args):
         self.fasta_path = args.fasta_path
         self.model_link = args.model_name
+        self.disable_special_tokens = args.disable_special_tokens
         self.model_name = re.sub(r"^.*?/", "", self.model_link)
         self.output_path = os.path.join(args.output_path, self.model_name)
         # Check if output directory exists and creates it if it's missing
@@ -74,7 +75,11 @@ class BaseEmbedder:
             "output_data": {layer: [] for layer in self.layers},
             "method": self.extract_embeddings_unpooled,
             "output_dir": os.path.join(self.output_path, "embeddings_unpooled"),
-            "shape": (self.num_sequences, self.max_length, self.embedding_size),
+            "shape": (
+                self.num_sequences,
+                self.max_length if self.disable_special_tokens else self.max_length + 2,
+                self.embedding_size,
+            ),
         }
         self.cdr3_extracted = {
             "output_data": {layer: [] for layer in self.layers},
@@ -91,8 +96,19 @@ class BaseEmbedder:
             "output_dir": os.path.join(
                 self.output_path, "attention_matrices_all_heads"
             ),
-            "shape": (self.num_sequences, self.max_length, self.max_length),
-            "shape_flattened": (self.num_sequences, self.max_length**2),
+            "shape": (
+                self.num_sequences,
+                self.max_length if self.disable_special_tokens else self.max_length + 2,
+                self.max_length if self.disable_special_tokens else self.max_length + 2,
+            ),
+            "shape_flattened": (
+                self.num_sequences,
+                (
+                    self.max_length**2
+                    if self.disable_special_tokens
+                    else (self.max_length + 2) ** 2
+                ),
+            ),
         }
         self.attention_matrices_average_layers = {
             "output_data": {layer: [] for layer in self.layers},
@@ -100,8 +116,19 @@ class BaseEmbedder:
             "output_dir": os.path.join(
                 self.output_path, "attention_matrices_average_layers"
             ),
-            "shape": (self.num_sequences, self.max_length, self.max_length),
-            "shape_flattened": (self.num_sequences, self.max_length**2),
+            "shape": (
+                self.num_sequences,
+                self.max_length if self.disable_special_tokens else self.max_length + 2,
+                self.max_length if self.disable_special_tokens else self.max_length + 2,
+            ),
+            "shape_flattened": (
+                self.num_sequences,
+                (
+                    self.max_length**2
+                    if self.disable_special_tokens
+                    else (self.max_length + 2) ** 2
+                ),
+            ),
         }
         self.attention_matrices_average_all = {
             "output_data": [],
@@ -109,8 +136,19 @@ class BaseEmbedder:
             "output_dir": os.path.join(
                 self.output_path, "attention_matrices_average_all"
             ),
-            "shape": (self.num_sequences, self.max_length, self.max_length),
-            "shape_flattened": (self.num_sequences, self.max_length**2),
+            "shape": (
+                self.num_sequences,
+                self.max_length if self.disable_special_tokens else self.max_length + 2,
+                self.max_length if self.disable_special_tokens else self.max_length + 2,
+            ),
+            "shape_flattened": (
+                self.num_sequences,
+                (
+                    self.max_length**2
+                    if self.disable_special_tokens
+                    else (self.max_length + 2) ** 2
+                ),
+            ),
         }
         self.cdr3_attention_matrices_average_layers = {
             "output_data": {layer: [] for layer in self.layers},
@@ -119,8 +157,19 @@ class BaseEmbedder:
                 self.output_path,
                 "cdr3_attention_matrices_average_layers",
             ),
-            "shape": (self.num_sequences, self.max_length, self.max_length),
-            "shape_flattened": (self.num_sequences, self.max_length**2),
+            "shape": (
+                self.num_sequences,
+                self.max_length if self.disable_special_tokens else self.max_length + 2,
+                self.max_length if self.disable_special_tokens else self.max_length + 2,
+            ),
+            "shape_flattened": (
+                self.num_sequences,
+                (
+                    self.max_length**2
+                    if self.disable_special_tokens
+                    else (self.max_length + 2) ** 2
+                ),
+            ),
         }
         self.cdr3_attention_matrices_average_all = {
             "output_data": [],
@@ -128,8 +177,19 @@ class BaseEmbedder:
             "output_dir": os.path.join(
                 self.output_path, "cdr3_attention_matrices_average_all"
             ),
-            "shape": (self.num_sequences, self.max_length, self.max_length),
-            "shape_flattened": (self.num_sequences, self.max_length**2),
+            "shape": (
+                self.num_sequences,
+                self.max_length if self.disable_special_tokens else self.max_length + 2,
+                self.max_length if self.disable_special_tokens else self.max_length + 2,
+            ),
+            "shape_flattened": (
+                self.num_sequences,
+                (
+                    self.max_length**2
+                    if self.disable_special_tokens
+                    else (self.max_length + 2) ** 2
+                ),
+            ),
         }
 
     # When changes made here, also update base_embedder.py BaseEmbedder.set_output_objects() method.

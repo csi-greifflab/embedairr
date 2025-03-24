@@ -130,12 +130,12 @@ class ESM1Embedder(ESMEmbedder):
         # model, alphabet = pretrained.load_model_and_alphabet(model_name)
         model, alphabet = pretrained.load_model_and_alphabet_hub(model_name)
         model.eval()  # Setting the model to evaluation mode
-        model.append_eos = (
-            False  # Removing the end of sequence token TODO make it optional
-        )
-        model.prepend_bos = (
-            False  # Removing the beginning of sequence token TODO make it optional
-        )
+        if not self.disable_special_tokens:
+            model.append_eos = True
+            model.prepend_bos = True
+        else:
+            model.append_eos = False
+            model.prepend_bos = False
 
         num_heads = model.layers[0].self_attn.num_heads
         num_layers = len(model.layers)
@@ -161,12 +161,12 @@ class ESM2Embedder(ESMEmbedder):
         # model, alphabet = pretrained.load_model_and_alphabet(model_name)
         model, alphabet = pretrained.load_model_and_alphabet_hub(model_name)
         model.eval()  # Setting the model to evaluation mode
-        model.append_eos = (
-            False  # Removing the end of sequence token TODO make it optional
-        )
-        model.prepend_bos = (
-            False  # Removing the beginning of sequence token TODO make it optional
-        )
+        if not self.disable_special_tokens:
+            model.append_eos = True
+            model.prepend_bos = True
+        else:
+            model.append_eos = False
+            model.prepend_bos = False
 
         num_heads = model.layers[0].self_attn.num_heads
         num_layers = len(model.layers)

@@ -1,6 +1,32 @@
 import argparse
-import os
 from embedairr.model_selecter import select_model
+
+supported_models = [
+    "esm1_t34_670M_UR50S",
+    "esm1_t34_670M_UR50D",
+    "esm1_t34_670M_UR100",
+    "esm1_t12_85M_UR50S",
+    "esm1_t6_43M_UR50S",
+    "esm1b_t33_650M_UR50S",
+    #'esm_msa1_t12_100M_UR50S',
+    #'esm_msa1b_t12_100M_UR50S',
+    "esm1v_t33_650M_UR90S_1",
+    "esm1v_t33_650M_UR90S_2",
+    "esm1v_t33_650M_UR90S_3",
+    "esm1v_t33_650M_UR90S_4",
+    "esm1v_t33_650M_UR90S_5",
+    #'esm_if1_gvp4_t16_142M_UR50',
+    "esm2_t6_8M_UR50D",
+    "esm2_t12_35M_UR50D",
+    "esm2_t30_150M_UR50D",
+    "esm2_t33_650M_UR50D",
+    "esm2_t36_3B_UR50D",
+    "esm2_t48_15B_UR50D",
+    "Rostlab/prot_t5_xl_half_uniref50-enc",
+    "Rostlab/ProstT5",
+    "alchemab/antiberta2-cssp",
+    "alchemab/antiberta2",
+]
 
 
 def str2bool(value):
@@ -22,6 +48,7 @@ def parse_arguments():
         "--model_name",
         type=str,
         required=True,
+        options=supported_models,
         help="Model name. Example: esm2_t33_650M_UR50D",
     )
     parser.add_argument(
@@ -101,6 +128,12 @@ def parse_arguments():
         action="store_true",
         default=True,
         help="Preallocate output files and wWrite embeddings to disk in batches. Default is True.",
+    )
+    parser.add_argument(
+        "--disable_special_tokens",
+        action="store_true",
+        default=False,
+        help="Disable special tokens in the model. Default is False.",
     )
 
     # TODO add experiment name

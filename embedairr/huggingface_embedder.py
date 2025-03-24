@@ -1,10 +1,12 @@
-import torch
-from transformers import RoFormerTokenizer, RoFormerModel
-from torch.utils.data import DataLoader, TensorDataset
-from embedairr.base_embedder import BaseEmbedder
 import time
 import os
+import torch
 from concurrent.futures import ThreadPoolExecutor
+from torch.utils.data import DataLoader, TensorDataset
+
+from embedairr.base_embedder import BaseEmbedder
+from transformers import T5EncoderModel, T5Tokenizer
+from transformers import RoFormerTokenizer, RoFormerModel
 
 # Set max_split_size_mb
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
@@ -38,7 +40,7 @@ class HuggingfaceEmbedder(BaseEmbedder):
             truncation=False,
             padding="max_length",
             return_tensors="pt",
-            add_special_tokens=False,  # TODO make it optional
+            add_special_tokens=(False if self.disable_special_tokens else True),  # TODO make it optional
             max_length=self.max_length,
         )
 
@@ -124,3 +126,95 @@ class HuggingfaceEmbedder(BaseEmbedder):
             if future is not None:
                 future.result()
             print("Finished extracting embeddings")
+
+
+class Antiberta2Embedder(HuggingfaceEmbedder):
+    def __init__(self, args):
+        super().__init__(args)
+        self.sequences_gapped, self.sequences = self.fasta_to_dict(
+            args.fasta_path, gaps=True
+        )
+        self.num_sequences = len(self.sequences_gapped)
+        (
+            self.model,
+            self.tokenizer,
+            self.num_heads,
+            self.num_layers,
+            self.embedding_size,
+        ) = self.initialize_model(self.model_link)
+        self.valid_tokens = set(self.tokenizer.get_vocab().keys())
+        self.check_input_tokens(self.valid_tokens, self.sequences_gapped, gaps=True)
+        self.special_tokens = torch.tensor(
+            self.tokenizer.all_special_ids, device=self.device, dtype=torch.int8
+        )
+        self.layers = self.load_layers(self.layers)
+        self.data_loader = self.load_data(self.sequences_gapped)
+        self.sequences = {
+            sequence_id: sequence_aa.replace(" ", "")
+            for sequence_id, sequence_aa in self.sequences_gapped.items()
+        }
+        self.set_output_objects()
+
+    def initialize_model(self, model_link="alchemab/antiberta2-cssp"):
+        """Initialize the model, tokenizer, and device."""
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+            print("Transferred model to GPU")
+        else:
+            device = torch.device("cpu")
+            print("No GPU available, using CPU")
+        tokenizer = RoFormerTokenizer.from_pretrained(model_link)
+        model = RoFormerModel.from_pretrained(model_link).to(device)
+        model.eval()
+        # disable eos and bos
+        model.config
+        num_heads = model.config.num_attention_heads
+        num_layers = model.config.num_hidden_layers
+        embedding_size = model.config.hidden_size
+        return model, tokenizer, num_heads, num_layers, embedding_size
+
+
+class T5Embedder(HuggingfaceEmbedder):
+    def __init__(self, args):
+        super().__init__(args)
+        self.sequences, _ = self.fasta_to_dict(args.fasta_path, gaps=False)
+        self.num_sequences = len(self.sequences)
+        (
+            self.model,
+            self.tokenizer,
+            self.num_heads,
+            self.num_layers,
+            self.embedding_size,
+        ) = self.initialize_model(self.model_link)
+        self.valid_tokens = self.get_valid_tokens()
+        self.check_input_tokens(self.valid_tokens, self.sequences, gaps=False)
+        self.special_tokens = torch.tensor(
+            self.tokenizer.all_special_ids, device=self.device, dtype=torch.int8
+        )
+        self.layers = self.load_layers(self.layers)
+        self.data_loader = self.load_data(self.sequences)
+        self.set_output_objects()
+
+    def get_valid_tokens(self):
+        valid_tokens = set(
+            k[1:] if k.startswith("▁") else k
+            for k in set(self.tokenizer.get_vocab().keys())
+        )
+        return valid_tokens
+
+    def initialize_model(self, model_link="Rostlab/prot_t5_xl_half_uniref50-enc"):
+        """Initialize the model, tokenizer, and device."""
+
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+            print("Transferred model to GPU")
+        else:
+            device = torch.device("cpu")
+            print("No GPU available, using CPU")
+        tokenizer = T5Tokenizer.from_pretrained(model_link)
+        model = T5EncoderModel.from_pretrained(model_link).to(device)
+        model.eval()
+        num_heads = model.config.num_heads
+        num_layers = model.config.num_layers
+        embedding_size = model.config.hidden_size
+        return model, tokenizer, num_heads, num_layers, embedding_size
