@@ -45,6 +45,12 @@ def parse_arguments():
     """Parse command-line arguments for input and output file paths."""
     parser = argparse.ArgumentParser(description="Input path")
     parser.add_argument(
+        "--experiment_name",
+        type=str,
+        default=None,
+        help="Name of the experiment. Will be used to name the output files. If not provided, the output files will be named after the input file.",
+    )
+    parser.add_argument(
         "--model_name",
         type=str,
         required=True,
@@ -52,7 +58,11 @@ def parse_arguments():
         help="Model name. Example: esm2_t33_650M_UR50D",
     )
     parser.add_argument(
-        "--fasta_path", type=str, required=True, help="Fasta path + filename.fa"
+        "--fasta_path",
+        type=str,
+        required=True,
+        help="Fasta path + filename.fa",
+        help="Path to the input FASTA file. Required. If no experiment name is provided, the output files will be named after the input file.",
     )
     parser.add_argument(
         "--output_path",
@@ -125,13 +135,15 @@ def parse_arguments():
     )
     parser.add_argument(
         "--batch_writing",
-        action="store_true",
+        type=str2bool,
+        options=[True, False],
         default=True,
-        help="Preallocate output files and wWrite embeddings to disk in batches. Default is True.",
+        help="Preallocate output files and write embeddings to disk in batches. Default is True.",
     )
     parser.add_argument(
         "--disable_special_tokens",
-        action="store_true",
+        action=str2bool,
+        options=[True, False],
         default=False,
         help="Disable special tokens in the model. Default is False.",
     )
