@@ -10,7 +10,6 @@ setup(
         "fair-esm",
         "sentencepiece",
         "numpy",
-        "esm",
     ],
     entry_points={"console_scripts": ["embedairr = embedairr.__main__:main"]},
 )

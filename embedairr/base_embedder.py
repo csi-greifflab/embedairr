@@ -16,9 +16,12 @@ class BaseEmbedder:
         # Check if output directory exists and creates it if it's missing
         if not os.path.exists(self.output_path):
             os.makedirs(self.output_path)
-        self.output_prefix = os.path.splitext(os.path.basename(self.fasta_path))[
-            0
-        ]  # get filename without extension and path
+        if not args.experiment_name:
+            self.output_prefix = os.path.splitext(os.path.basename(self.fasta_path))[
+                0
+            ]  # get filename without extension and path
+        else:
+            self.output_prefix = args.experiment_name
         self.cdr3_path = args.cdr3_path
         self.context = args.context
         self.layers = list(map(int, args.layers.split()))
