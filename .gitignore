@@ -3,7 +3,7 @@
 ignore.py
 ignore/
 data/
-tests/
+tests/*.py
 embedairr/embedairr.py
 # Byte-compiled / optimized / DLL files
 __pycache__/

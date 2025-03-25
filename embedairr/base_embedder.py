@@ -652,7 +652,7 @@ class BaseEmbedder:
                 tensor.extend(
                     (
                         pooling_mask[i, start:end].unsqueeze(-1)
-                        * representations[layer, i, start:end]
+                        * representations[layer][i, start:end]
                     ).sum(0)
                     / pooling_mask[i, start:end].unsqueeze(-1).sum(0)
                 )
@@ -664,7 +664,7 @@ class BaseEmbedder:
                 )
                 self.write_batch_to_disk(output_file, tensor, batch_idx)
             else:
-                self.cdr3_extracted = {tensor.cpu()}
+                self.cdr3_extracted["output_data"][layer].extend(tensor.cpu())
 
     def write_batch_to_disk(self, file_path, tensor, batch_idx):
         with open(file_path, "r+b") as f:
@@ -685,66 +685,70 @@ class BaseEmbedder:
                 for layer in self.layers:
                     output_file_layer = os.path.join(
                         self.output_path,
-                        self.model_name,
                         output_type,
                         f"{output_name}_{self.model_name}_{output_type}_layer_{layer}.pt",
                     )
                     if "unpooled" not in output_type:
                         getattr(self, output_type)[layer] = torch.vstack(
-                            getattr(self, output_type)[layer]
+                            getattr(self, output_type)["output_data"][layer]
                         )
                         stacked = True
                     if self.flatten and "unpooled" in output_type:
-                        getattr(self, output_type)[layer] = torch.stack(
-                            getattr(self, output_type)[layer], dim=0
+                        getattr(self, output_type)["output_data"][layer] = torch.stack(
+                            getattr(self, output_type)["output_data"][layer], dim=0
                         ).flatten(start_dim=1)
                         stacked = True
                     elif not self.discard_padding and not stacked:
-                        getattr(self, output_type)[layer] = torch.stack(
-                            getattr(self, output_type)[layer]
+                        getattr(self, output_type)["output_data"][layer] = torch.stack(
+                            getattr(self, output_type)["output_data"][layer]
                         )
                         stacked = True
-                    torch.save((getattr(self, output_type)[layer]), output_file_layer)
+                    torch.save(
+                        (getattr(self, output_type)["output_data"][layer]),
+                        output_file_layer,
+                    )
                     print(
                         f"Saved {output_type} representation for layer {layer} to {output_file_layer}"
                     )
             elif "average_all" in output_type:
                 output_file = os.path.join(
                     self.output_path,
-                    self.model_name,
                     output_type,
                     f"{self.output_prefix}_{self.model_name}_{output_type}.pt",
                 )
                 if self.flatten:
                     torch.save(
-                        torch.stack(getattr(self, output_type), dim=0).flatten(
-                            start_dim=1
-                        ),
+                        torch.stack(
+                            getattr(self, output_type)["output_data"], dim=0
+                        ).flatten(start_dim=1),
                         output_file,
                     )
                 else:
                     torch.save(
-                        torch.stack(getattr(self, output_type), dim=0), output_file
+                        torch.stack(getattr(self, output_type)["output_data"], dim=0),
+                        output_file,
                     )
                 print(f"Saved {output_type} representation to {output_file}")
             elif "average_layer" in output_type:
                 for layer in self.layers:
                     output_file = os.path.join(
                         self.output_path,
-                        self.model_name,
                         output_type,
                         f"{self.output_prefix}_{self.model_name}_{output_type}_layer_{layer}.pt",
                     )
                     if self.flatten:
                         torch.save(
                             torch.stack(
-                                getattr(self, output_type)[layer], dim=0
+                                getattr(self, output_type)["output_data"][layer], dim=0
                             ).flatten(start_dim=1),
                             output_file,
                         )
                     else:
                         torch.save(
-                            torch.stack(getattr(self, output_type)[layer]), output_file
+                            torch.stack(
+                                getattr(self, output_type)["output_data"][layer]
+                            ),
+                            output_file,
                         )
                     print(
                         f"Saved {output_type} representation for layer {layer} to {output_file}"
@@ -754,14 +758,16 @@ class BaseEmbedder:
                     for head in range(self.num_heads):
                         output_file = os.path.join(
                             self.output_path,
-                            self.model_name,
                             output_type,
                             f"{self.output_prefix}_{self.model_name}_{output_type}_layer_{layer}_head_{head + 1}.pt",
                         )
                         if self.flatten:
                             torch.save(
                                 torch.stack(
-                                    getattr(self, output_type)[layer][head], dim=0
+                                    getattr(self, output_type)["output_data"][layer][
+                                        head
+                                    ],
+                                    dim=0,
                                 ).flatten(start_dim=1),
                                 output_file,
                             )
@@ -769,7 +775,11 @@ class BaseEmbedder:
                             # del getattr(self, output_type)
                         else:
                             torch.save(
-                                torch.stack(getattr(self, output_type)[layer][head]),
+                                torch.stack(
+                                    getattr(self, output_type)["output_data"][layer][
+                                        head
+                                    ]
+                                ),
                                 output_file,
                             )
                             # delete the tensor from memory
