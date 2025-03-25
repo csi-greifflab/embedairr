@@ -54,7 +54,7 @@ def parse_arguments():
         "--model_name",
         type=str,
         required=True,
-        options=supported_models,
+        choices=supported_models,
         help="Model name. Example: esm2_t33_650M_UR50D",
     )
     parser.add_argument(
@@ -130,19 +130,19 @@ def parse_arguments():
     parser.add_argument(
         "--max_length",
         default=140,
-        help="Length to which sequences will be padded. Default is 200.",
+        help="Length to which sequences will be padded. Default is 140.",
     )
     parser.add_argument(
         "--batch_writing",
         type=str2bool,
-        options=[True, False],
+        choices=[True, False],
         default=True,
         help="Preallocate output files and write embeddings to disk in batches. Default is True.",
     )
     parser.add_argument(
         "--disable_special_tokens",
-        action=str2bool,
-        options=[True, False],
+        type=str2bool,
+        choices=[True, False],
         default=False,
         help="Disable special tokens in the model. Default is False.",
     )
