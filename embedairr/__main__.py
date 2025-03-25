@@ -61,7 +61,6 @@ def parse_arguments():
         "--fasta_path",
         type=str,
         required=True,
-        help="Fasta path + filename.fa",
         help="Path to the input FASTA file. Required. If no experiment name is provided, the output files will be named after the input file.",
     )
     parser.add_argument(
