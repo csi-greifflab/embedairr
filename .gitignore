@@ -1,9 +1,10 @@
+*.tsv
 *.code-workspace
 .vscode/
 ignore.py
 ignore/
 data/
-tests/*.py
+tests/x*.py
 embedairr/embedairr.py
 # Byte-compiled / optimized / DLL files
 __pycache__/
