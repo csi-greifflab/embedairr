@@ -11,17 +11,49 @@ EmbedAIRR is a tool for extracting embeddings and attention matrices from protei
 
 2. Install the required dependencies:
     ```sh
-    pip install -r requirements.txt
+    cd embedairr
+    pip install .
     ```
 
 3. Run the embedding script:
     ```sh
-    python embed_airr.py --fasta_path <input-file> --output_path <output-file> --model_name <model_name> --<optional_arguments>
+    embedairr --experiment_name <optional_string> --fasta_path <file_path> --output_path <directory> --model_name <model_name> --<other_optional_arguments>
     ```
 
+## List of supported models:
+- ESM-family models
+    - ESM1:
+        - esm1_t34_670M_UR50S
+        - esm1_t34_670M_UR50D
+        - esm1_t34_670M_UR100
+        - esm1_t12_85M_UR50S
+        - esm1_t6_43M_UR50S
+        - esm1b_t33_650M_UR50S
+        - esm1v_t33_650M_UR90S_1
+        - esm1v_t33_650M_UR90S_2
+        - esm1v_t33_650M_UR90S_3
+        - esm1v_t33_650M_UR90S_4
+        - esm1v_t33_650M_UR90S_5
+    - ESM2:
+        - esm2_t6_8M_UR50D
+        - esm2_t12_35M_UR50D
+        - esm2_t30_150M_UR50D
+        - esm2_t33_650M_UR50D
+        - esm2_t36_3B_UR50D
+        - esm2_t48_15B_UR50D
+- Huggingface Transformer models
+    - T5 transformer models (tested)
+        - Rostlab/prot_t5_xl_half_uniref50-enc
+        - Rostlab/ProstT5
+    - RoFormer models (tested)
+        - AntiBERTa2-CSSP
+        - AntiBERTa2
+
+
 ## Arguments
-- --model_name (str, required): Model name. Example: esm2_t33_650M_UR50D.
-- --fasta_path (str, required): Path to the FASTA file.
+- --experiment_name (str, optional): Prefix for names of output files. If not provided, name of input file will be used for prefix.
+- --model_name (str, required): Name of model or link to model. Choose from 'List of supported models'. Example: esm2_t33_650M_UR50D.
+- --fasta_path (str, required): "Path to the input FASTA file. If no experiment name is provided, the output files will be named after the input file.",
 - --output_path (str, required): Directory for output files. Will generate a subdirectory for outputs of each output type.
 - --cdr3_path (str, optional): Path to the CDR3 CSV file. Only required when calculating CDR3 sequence embeddings.
 - --context (int, optional): Number of amino acids to include before and after the CDR3 sequence. Default is 0.
@@ -33,3 +65,5 @@ EmbedAIRR is a tool for extracting embeddings and attention matrices from protei
 - --batch_size (int, optional): Batch size for loading sequences. Default is 1024.
 - --discard_padding (bool, optional): Discard padding tokens from unpooled embeddings output. Default is False.
 - --max_length (int, optional): Length to which sequences will be padded. Default is 140.
+- --batch_writing (str, optional): When True, embedair preallocates the required disk space and writes each batch of outputs to disk. When False, all outputs are stored in RAM and written to disk at once after computation has finished. Default is True.
+- --disable_special_tokens (str, optional): When True, embedair disables pre- and appending BOS/CLS and EOS/SEP tokens before embedding. Default is false.
