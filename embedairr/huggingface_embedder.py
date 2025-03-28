@@ -60,7 +60,7 @@ class HuggingfaceEmbedder(BaseEmbedder):
     def embed(self):
         # Multithreading to overlap computation and writing
         futures = []
-        with ThreadPoolExecutor(max_workers=8) as executor:
+        with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
             future = None  # To store the async write operation
             with torch.no_grad():
                 for batch_idx, batch in enumerate(self.data_loader):

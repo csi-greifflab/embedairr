@@ -49,6 +49,8 @@ class BaseEmbedder:
         else:
             self.return_embeddings = True
         self.batch_writing = args.batch_writing
+        if self.batch_writing:
+            self.num_workers = args.num_workers
 
     def check_input_tokens(self, valid_tokens, sequences, gaps=False):
         print("Checking input sequences for invalid tokens...")
@@ -654,9 +656,11 @@ class BaseEmbedder:
                 self.cdr3_extracted["output_data"][layer].extend(tensor)
 
     def write_batch_to_disk(self, mmapped_array, tensor, batch_idx):
+        batch_size = tensor.shape[0]
         tensor = tensor.contiguous().cpu().numpy()
-        batch_size = tensor.shape[0] * tensor.shape[1]
-        mmapped_array[batch_idx * batch_size : (batch_idx + 1) * batch_size] = tensor
+        # mmapped_array[batch_idx * batch_size : (batch_idx + 1) * batch_size] = tensor
+        mmapped_array[batch_idx : batch_idx + batch_size, ...] = tensor
+
         mmapped_array.flush()
 
     def export_to_disk(self):

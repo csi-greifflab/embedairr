@@ -147,6 +147,12 @@ def parse_arguments():
         help="Preallocate output files and write embeddings to disk in batches. Default is True.",
     )
     parser.add_argument(
+        "--num_workers",
+        type=int,
+        default=4,
+        help="Number of workers for asynchronous data writing. Only relevant when --batch_writing is enabled. Default is 1.",
+    )
+    parser.add_argument(
         "--disable_special_tokens",
         type=str2bool,
         choices=[True, False],
