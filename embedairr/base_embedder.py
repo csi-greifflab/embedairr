@@ -248,7 +248,7 @@ class BaseEmbedder:
             if "average_all" in output_type:
                 output_file = os.path.join(
                     getattr(self, output_type)["output_dir"],
-                    f"{self.output_prefix}_{self.model_name}_{output_type}.pt",
+                    f"{self.output_prefix}_{self.model_name}_{output_type}.npy",
                 )
                 # Save it to disk
                 getattr(self, output_type)["output_data"] = open_memmap(
@@ -258,7 +258,7 @@ class BaseEmbedder:
                 for layer in self.layers:
                     output_file = os.path.join(
                         getattr(self, output_type)["output_dir"],
-                        f"{self.output_prefix}_{self.model_name}_{output_type}_layer_{layer}.pt",
+                        f"{self.output_prefix}_{self.model_name}_{output_type}_layer_{layer}.npy",
                     )
                     # Save it to disk
                     getattr(self, output_type)["output_data"][layer] = open_memmap(
@@ -269,7 +269,7 @@ class BaseEmbedder:
                     for head in range(self.num_heads):
                         output_file = os.path.join(
                             getattr(self, output_type)["output_dir"],
-                            f"{self.output_prefix}_{self.model_name}_{output_type}_layer_{layer}_head_{head + 1}.pt",
+                            f"{self.output_prefix}_{self.model_name}_{output_type}_layer_{layer}_head_{head + 1}.npy",
                         )
                         # Save it to disk
                         getattr(self, output_type)["output_data"][layer][head] = (
@@ -282,7 +282,7 @@ class BaseEmbedder:
             for layer in self.layers:
                 output_file = os.path.join(
                     getattr(self, output_type)["output_dir"],
-                    f"{self.output_prefix}_{self.model_name}_{output_type}_layer_{layer}.pt",
+                    f"{self.output_prefix}_{self.model_name}_{output_type}_layer_{layer}.npy",
                 )
                 # Save it to disk
                 getattr(self, output_type)["output_data"][layer] = open_memmap(
@@ -293,7 +293,7 @@ class BaseEmbedder:
             for layer in self.layers:
                 output_file = os.path.join(
                     getattr(self, output_type)["output_dir"],
-                    f"{self.output_prefix}_{self.model_name}_{output_type}_layer_{layer}.pt",
+                    f"{self.output_prefix}_{self.model_name}_{output_type}_layer_{layer}.npy",
                 )
                 # Save it to disk
                 getattr(self, output_type)["output_data"][layer] = open_memmap(
@@ -770,6 +770,20 @@ class BaseEmbedder:
                         print(
                             f"Saved {output_type} representation for layer {layer} head {head + 1} to {output_file}"
                         )
+            elif "logits" in output_type:
+                for layer in self.layers:
+                    output_file = os.path.join(
+                        self.output_path,
+                        output_type,
+                        f"{self.output_prefix}_{self.model_name}_{output_type}_layer_{layer}.pt",
+                    )
+                    torch.save(
+                        torch.stack(getattr(self, output_type)["output_data"][layer]),
+                        output_file,
+                    )
+                    print(
+                        f"Saved {output_type} representation for layer {layer} to {output_file}"
+                    )
 
     def export_sequence_indices(self):
         """Save sequence indices to a CSV file."""
