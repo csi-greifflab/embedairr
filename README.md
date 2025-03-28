@@ -63,12 +63,13 @@ EmbedAIRR is a tool for extracting embeddings and attention matrices from protei
 - --cdr3_path (str, optional): Path to the CDR3 CSV file. Only required when calculating CDR3 sequence embeddings.
 - --context (int, optional): Number of amino acids to include before and after the CDR3 sequence. Default is 0.
 - --layers (str, optional): Representation layers to extract from the model. Default is the last layer. Example: --layers -1 6.
+- --extract_logits (str, optional): If true, logits from selected layers will be exported to file. Default is false.
 - --extract_embeddings (str, optional): Set the embedding return types. Choose one or more from: pooled, unpooled, false. Default is pooled.
 - --extract_cdr3_embeddings (str, optional): Set the CDR3 embedding return types. Choose one or more from: pooled, unpooled, false. Requires --cdr3_path to be set. Default is pooled.
 - --extract_attention_matrices (str, optional): Set the attention matrix return types. Choose one or more from: false, all_heads, average_layer, average_all. Default is false.
 - --extract_cdr3_attention_matrices (str, optional): Set the CDR3 attention matrix return types. Choose one or more from: false, all_heads, average_layer, average_all. Requires --cdr3_path to be set. Default is false.
 - --batch_size (int, optional): Batch size for loading sequences. Default is 1024.
 - --discard_padding (bool, optional): Discard padding tokens from unpooled embeddings output. Default is False.
-- --max_length (int, optional): Length to which sequences will be padded. Default is 140.
-- --batch_writing (str, optional): When True, embedair preallocates the required disk space and writes each batch of outputs to disk. When False, all outputs are stored in RAM and written to disk at once after computation has finished. Default is True.
+- --max_length (int, optional): Length to which sequences will be padded. Default is length of longest sequence in input file. If shorter than longest sequence, will forcefully default to length of longest sequence.
+- --batch_writing (str, optional): When True, embedair preallocates the required disk space and writes each batch of outputs to .npy files. When False, all outputs are stored in RAM and written to disk at once after computation has finished and stored as .pt files. Default is True.
 - --disable_special_tokens (str, optional): When True, embedair disables pre- and appending BOS/CLS and EOS/SEP tokens before embedding. Default is false.

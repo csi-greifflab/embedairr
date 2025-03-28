@@ -136,8 +136,8 @@ def parse_arguments():
     )
     parser.add_argument(
         "--max_length",
-        default=140,
-        help="Length to which sequences will be padded. Default is 140.",
+        default="max_length",
+        help="Length to which sequences will be padded. Default is longest sequence.",
     )
     parser.add_argument(
         "--batch_writing",
@@ -163,10 +163,11 @@ def main():
     # Parse and store arguments
 
     args = parse_arguments()
-    if args.batch_writing and "false" not in args.extract_cdr3_attention_matrices:
-        raise ValueError(
-            "Batch writing is not supported with CDR3 attention matrices. Set '--batch_writing False' to disable."
-        )
+    if args.batch_writing:
+        if "false" not in args.extract_cdr3_embeddings:
+            raise ValueError(
+                "Batch writing is not supported with CDR3 attention matrices. Set '--batch_writing False' to disable."
+            )
 
     selected_model = select_model(args.model_name)
 

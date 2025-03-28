@@ -351,10 +351,12 @@ class BaseEmbedder:
                 len(re.findall(r"<.*?>|.", seq)) for seq in seq_dict.values()
             )
 
-        if self.max_length < longest_sequence:
+        if self.max_length == "max_length":
+            self.max_length = longest_sequence
+        elif self.max_length < longest_sequence:
             # raise warning
             print(
-                f"Longest sequence with length {longest_sequence} is longer than the specified max_length {self.max_length} for padding"
+                f"Warning: Longest sequence with length {longest_sequence} is longer than the specified max_length {self.max_length} for padding"
             )
             self.max_length = longest_sequence
         if not padding:
@@ -664,7 +666,7 @@ class BaseEmbedder:
         ]  # get filename without extension and path
         for output_type in self.output_types:
             print(f"Saving {output_type} representations...")
-            if "attention_matrices" not in output_type:
+            if "attention_matrices" not in output_type:  # save embeddings
                 for layer in self.layers:
                     output_file_layer = os.path.join(
                         self.output_path,

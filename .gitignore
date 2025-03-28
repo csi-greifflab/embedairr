@@ -1,3 +1,4 @@
+tests/test_files/test_output
 *.tsv
 *.code-workspace
 .vscode/
