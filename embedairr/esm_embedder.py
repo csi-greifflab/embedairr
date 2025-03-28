@@ -27,7 +27,6 @@ class ESMEmbedder(BaseEmbedder):
         self.layers = self.load_layers(self.layers)
         self.data_loader = self.load_data()
         self.set_output_objects()
-        pass
 
     def get_special_tokens(self):
         special_tokens = self.alphabet.all_special_tokens
@@ -73,7 +72,7 @@ class ESMEmbedder(BaseEmbedder):
         with ThreadPoolExecutor(max_workers=8) as executor:
             future = None  # To store the async write operation
             with torch.no_grad():
-                for batch_idx, (labels, strs, toks) in enumerate(self.data_loader):
+                for batch_idx, (labels, _, toks) in enumerate(self.data_loader):
                     print(
                         f"Start embedding batch {batch_idx + 1} of {len(self.data_loader)}"
                     )
@@ -88,6 +87,15 @@ class ESMEmbedder(BaseEmbedder):
                         repr_layers=self.layers,
                         return_contacts=self.return_contacts,
                     )
+                    if self.return_logits:
+                        logits = (
+                            outputs["logits"]
+                            .to(dtype=torch.float16, device="cpu")
+                            .permute(2, 0, 1)
+                        )  # permute to match the shape of the representations
+                    else:
+                        logits = None
+
                     if self.return_contacts:
                         attention_matrices = (
                             outputs["attentions"]
@@ -109,15 +117,17 @@ class ESMEmbedder(BaseEmbedder):
                     # Wait for the previous write to finish (if any)
                     # if future is not None:
                     #    future.result()  # Ensures previous write completed before reusing resources
-
+                    output_bundle = {
+                        "logits": logits,
+                        "attention_matrices": attention_matrices,
+                        "representations": representations,
+                        "batch_labels": labels,
+                        "pooling_mask": pooling_mask,
+                        "batch_idx": batch_idx,
+                    }
                     future = executor.submit(
                         self.extract_batch,
-                        attention_matrices,
-                        representations,
-                        labels,
-                        strs,
-                        pooling_mask,
-                        batch_idx,
+                        output_bundle,
                     )
                     futures.append(future)
                     # print total progress

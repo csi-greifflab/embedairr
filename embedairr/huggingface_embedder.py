@@ -71,9 +71,6 @@ class HuggingfaceEmbedder(BaseEmbedder):
                     labels = list(self.sequences.keys())[
                         batch_idx * self.batch_size : (batch_idx + 1) * self.batch_size
                     ]
-                    batch_sequences = list(self.sequences.values())[
-                        batch_idx * self.batch_size : (batch_idx + 1) * self.batch_size
-                    ]
                     input_ids, attention_mask = [
                         b.to(self.device, non_blocking=True) for b in batch
                     ]
@@ -108,16 +105,14 @@ class HuggingfaceEmbedder(BaseEmbedder):
                     # Wait for the previous write to finish (if any)
                     # if future is not None:
                     #    future.result()  # Ensures previous write completed before reusing resources
-
-                    future = executor.submit(
-                        self.extract_batch,
-                        attention_matrices,
-                        representations,
-                        labels,
-                        batch_sequences,
-                        pooling_mask,
-                        batch_idx,
-                    )
+                    output_bundle = {
+                        "attention_matrices": attention_matrices,
+                        "representations": representations,
+                        "batch_labels": labels,
+                        "pooling_mask": pooling_mask,
+                        "batch_idx": batch_idx,
+                    }
+                    future = executor.submit(self.extract_batch, output_bundle)
                     futures.append(future)
                     end_time = time.time()
                     sequences_per_second = self.batch_size / (end_time - start_time)

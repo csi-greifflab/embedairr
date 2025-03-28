@@ -89,6 +89,13 @@ def parse_arguments():
         help="Representation layers to extract from the model. Default is the last layer. Example: argument '--layers -1 6' will output the last layer and the sixth layer.",
     )
     parser.add_argument(
+        "--extract_logits",
+        type=str2bool,
+        choices=[True, False],
+        default=False,
+        help="Set to True to extract logits. Default is False.",
+    )
+    parser.add_argument(
         "--extract_embeddings",
         choices=["pooled", "unpooled", "false"],
         default=["pooled"],
