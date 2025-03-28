@@ -156,14 +156,14 @@ def main():
     # Parse and store arguments
 
     args = parse_arguments()
-    if args.batch_writing and args.extract_cdr3_attention_matrices != "false":
+    if args.batch_writing and "false" not in args.extract_cdr3_attention_matrices:
         raise ValueError(
             "Batch writing is not supported with CDR3 attention matrices. Set '--batch_writing False' to disable."
         )
 
-    embedder = select_model(args.model_name)
+    selected_model = select_model(args.model_name)
 
-    embedder = embedder(args)
+    embedder = selected_model(args)
 
     print("Embedder initialized")
 

@@ -69,7 +69,8 @@ class ESMEmbedder(BaseEmbedder):
 
     def embed(self):
         # Multithreading to overlap computation and writing
-        with ThreadPoolExecutor(max_workers=1) as executor:
+        futures = []
+        with ThreadPoolExecutor(max_workers=8) as executor:
             future = None  # To store the async write operation
             with torch.no_grad():
                 for batch_idx, (labels, strs, toks) in enumerate(self.data_loader):
@@ -81,7 +82,7 @@ class ESMEmbedder(BaseEmbedder):
                         toks = toks.to(device="cuda", non_blocking=True)
                     pooling_mask = self.mask_special_tokens(
                         toks, self.special_tokens
-                    )  # mask special tokens to avoid diluting signal when pooling embeddings
+                    ).cpu()  # mask special tokens to avoid diluting signal when pooling embeddings
                     outputs = self.model(
                         toks,
                         repr_layers=self.layers,
@@ -92,13 +93,13 @@ class ESMEmbedder(BaseEmbedder):
                             outputs["attentions"]
                             .to(dtype=torch.float16)
                             .permute(1, 0, 2, 3, 4)
-                        )  # permute to match the shape of the representations
+                        ).cpu()  # permute to match the shape of the representations
                     else:
                         attention_matrices = None
                     # Extracting layer representations and moving them to CPU
                     if self.return_embeddings:
                         representations = {
-                            layer: t.to(dtype=torch.float16)
+                            layer: t.to(dtype=torch.float16).cpu()
                             for layer, t in outputs["representations"].items()
                         }
                     else:
@@ -106,10 +107,11 @@ class ESMEmbedder(BaseEmbedder):
                     self.sequence_labels.extend(labels)
 
                     # Wait for the previous write to finish (if any)
-                    if future is not None:
-                        future.result()  # Ensures previous write completed before reusing resources
+                    # if future is not None:
+                    #    future.result()  # Ensures previous write completed before reusing resources
 
-                    future = self.extract_batch(
+                    future = executor.submit(
+                        self.extract_batch,
                         attention_matrices,
                         representations,
                         labels,
@@ -117,6 +119,7 @@ class ESMEmbedder(BaseEmbedder):
                         pooling_mask,
                         batch_idx,
                     )
+                    futures.append(future)
                     # print total progress
                     end_time = time.time()
                     sequences_per_second = len(labels) / (end_time - start_time)
@@ -127,8 +130,11 @@ class ESMEmbedder(BaseEmbedder):
                         f"{self.model_name}: {len(self.sequence_labels)} sequences of {len(self.sequences)} processed ({sequences_per_second:.2f} sequences/s). Estimated remaining time: {estimated_remaining_time:.2f} s"
                     )
 
-        if future is not None:
-            future.result()  # Ensures the last write completed before exiting
+        print("Finishing writing embeddings...")
+        for future in futures:
+            future.result()
+        # if future is not None:
+        #    future.result()  # Ensures the last write completed before exiting
         print("Finished extracting embeddings")
 
 

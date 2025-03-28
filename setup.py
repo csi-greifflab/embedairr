@@ -10,6 +10,8 @@ setup(
         "fair-esm",
         "sentencepiece",
         "numpy",
+        "protobuf",
+        "rjie",
     ],
     entry_points={"console_scripts": ["embedairr = embedairr.__main__:main"]},
 )

@@ -30,7 +30,6 @@ class BaseEmbedder:
         self.max_length = args.max_length
         if torch.cuda.is_available():
             self.device = torch.device("cuda")
-            print(f"Transferred model {self.model_name} to GPU")
         else:
             self.device = torch.device("cpu")
         self.output_types = self.get_output_types(args)
@@ -351,9 +350,6 @@ class BaseEmbedder:
             with open(cdr3_path) as f:
                 reader = csv.reader(f)
                 cdr3_dict = {rows[0]: rows[1] for rows in reader}
-                for i, (key, value) in enumerate(cdr3_dict.items()):
-                    if i < 5:
-                        print(f"{key} : {value}   cdr3 dict")
             return cdr3_dict
         else:
             return None
@@ -456,7 +452,7 @@ class BaseEmbedder:
                 )
                 self.write_batch_to_disk(output_file, tensor, batch_idx)
             else:
-                self.embeddings["output_data"][layer].extend(tensor.cpu())
+                self.embeddings["output_data"][layer].extend(tensor)
 
     def extract_embeddings_unpooled(
         self,
@@ -479,13 +475,13 @@ class BaseEmbedder:
                     )
                     self.write_batch_to_disk(output_file, tensor, batch_idx)
                 else:
-                    self.embeddings_unpooled["output_data"][layer].extend(tensor.cpu())
+                    self.embeddings_unpooled["output_data"][layer].extend(tensor)
         else:  # TODO remove padding tokens
             print("Feature not implemented yet")
             pass
             for layer in self.layers:
                 self.embeddings_unpooled["output_data"][layer].extend(
-                    [representations[layer][i].cpu() for i in range(len(batch_labels))]
+                    [representations[layer][i] for i in range(len(batch_labels))]
                 )
 
     def extract_attention_matrices_all_heads(
@@ -516,7 +512,7 @@ class BaseEmbedder:
                 else:
                     self.attention_matrices_all_heads["output_data"][layer][
                         head
-                    ].extend(tensor.cpu())
+                    ].extend(tensor)
 
     def extract_attention_matrices_average_layer(
         self,
@@ -544,7 +540,7 @@ class BaseEmbedder:
                 self.write_batch_to_disk(output_file, tensor, batch_idx)
             else:
                 self.attention_matrices_average_layers["output_data"][layer].extend(
-                    tensor.cpu()
+                    tensor
                 )
 
     def extract_attention_matrices_average_all(
@@ -571,7 +567,7 @@ class BaseEmbedder:
             )
             self.write_batch_to_disk(output_file, tensor, batch_idx)
         else:
-            self.attention_matrices_average_all["output_data"].extend(tensor.cpu())
+            self.attention_matrices_average_all["output_data"].extend(tensor)
 
     def extract_cdr3_attention_matrices_average_all_heads(
         self,
@@ -595,7 +591,7 @@ class BaseEmbedder:
                 tensor = torch.stack(tensor)
                 self.cdr3_attention_matrices_all_heads["output_data"][layer][
                     head
-                ].extend(tensor.cpu())
+                ].extend(tensor)
 
     def extract_cdr3_attention_matrices_average_layer(
         self,
@@ -613,10 +609,10 @@ class BaseEmbedder:
                 tensor.extend(
                     attention_matrices[layer - 1, i, :, start:end, start:end].mean(0)
                 )
-                tensor = torch.stack(tensor)
-                self.cdr3_attention_matrices_average_layers["output_data"][
-                    layer
-                ].extend(tensor.cpu())
+            tensor = torch.stack(tensor)
+            self.cdr3_attention_matrices_average_layers["output_data"][layer].extend(
+                tensor
+            )
 
     def extract_cdr3_attention_matrices_average_all(
         self,
@@ -634,7 +630,7 @@ class BaseEmbedder:
                 attention_matrices[:, i, :, start:end, start:end].mean(dim=(0, 1))
             )
         tensor = torch.stack(tensor)
-        self.cdr3_attention_matrices_average_all["output_data"].extend(tensor.cpu())
+        self.cdr3_attention_matrices_average_all["output_data"].extend(tensor)
 
     def extract_cdr3(
         self,
@@ -664,14 +660,14 @@ class BaseEmbedder:
                 )
                 self.write_batch_to_disk(output_file, tensor, batch_idx)
             else:
-                self.cdr3_extracted["output_data"][layer].extend(tensor.cpu())
+                self.cdr3_extracted["output_data"][layer].extend(tensor)
 
     def write_batch_to_disk(self, file_path, tensor, batch_idx):
         with open(file_path, "r+b") as f:
             mmapped_file = mmap.mmap(f.fileno(), length=0, access=mmap.ACCESS_WRITE)
             offset = batch_idx * tensor.element_size() * tensor.shape[0]
             mmapped_file.seek(offset)
-            mmapped_file.write(tensor.cpu().numpy().tobytes())
+            mmapped_file.write(tensor.numpy().tobytes())
             mmapped_file.flush()
 
     def export_to_disk(self):

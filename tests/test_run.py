@@ -6,7 +6,7 @@ from embedairr.model_selecter import select_model
 
 # os.environ["CUDA_VISIBLE_DEVICES"] = ""
 sys.argv = [
-    "embedairr.py",
+    "embedairr",
     "--experiment_name",
     "test",
     "--model_name",

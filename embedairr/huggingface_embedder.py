@@ -40,7 +40,9 @@ class HuggingfaceEmbedder(BaseEmbedder):
             truncation=False,
             padding="max_length",
             return_tensors="pt",
-            add_special_tokens=(False if self.disable_special_tokens else True),  # TODO make it optional
+            add_special_tokens=(
+                False if self.disable_special_tokens else True
+            ),  # TODO make it optional
             max_length=self.max_length,
         )
 
@@ -57,7 +59,8 @@ class HuggingfaceEmbedder(BaseEmbedder):
 
     def embed(self):
         # Multithreading to overlap computation and writing
-        with ThreadPoolExecutor(max_workers=1) as executor:
+        futures = []
+        with ThreadPoolExecutor(max_workers=8) as executor:
             future = None  # To store the async write operation
             with torch.no_grad():
                 for batch_idx, batch in enumerate(self.data_loader):
@@ -103,8 +106,8 @@ class HuggingfaceEmbedder(BaseEmbedder):
                     self.sequence_labels.extend(labels)
 
                     # Wait for the previous write to finish (if any)
-                    if future is not None:
-                        future.result()  # Ensures previous write completed before reusing resources
+                    # if future is not None:
+                    #    future.result()  # Ensures previous write completed before reusing resources
 
                     future = executor.submit(
                         self.extract_batch,
@@ -115,6 +118,7 @@ class HuggingfaceEmbedder(BaseEmbedder):
                         pooling_mask,
                         batch_idx,
                     )
+                    futures.append(future)
                     end_time = time.time()
                     sequences_per_second = self.batch_size / (end_time - start_time)
                     estimated_time_remaining = (
@@ -123,8 +127,10 @@ class HuggingfaceEmbedder(BaseEmbedder):
                     print(
                         f"Processed {self.model_name}: {len(self.sequence_labels)} out of {len(self.sequences)} sequences ({sequences_per_second:.2f} sequences per second). Estimated time remaining: {estimated_time_remaining:.2f} seconds."
                     )
-            if future is not None:
+            for future in futures:
                 future.result()
+            # if future is not None:
+            #    future.result()
             print("Finished extracting embeddings")
 
 

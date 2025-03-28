@@ -11,7 +11,12 @@ EmbedAIRR is a tool for extracting embeddings and attention matrices from protei
 
 2. Install the required dependencies:
     ```sh
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+    ```
+    
+    ```sh
     cd embedairr
+    pip install --upgrade pip
     pip install .
     ```
 
