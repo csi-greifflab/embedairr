@@ -4,3 +4,5 @@ transformers
 fair-esm
 sentencepiece
 numpy
+protobuf
+rjieba
