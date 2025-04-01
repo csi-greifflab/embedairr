@@ -26,6 +26,7 @@ class ESMEmbedder(BaseEmbedder):
         self.special_tokens = self.get_special_tokens()
         self.layers = self.load_layers(self.layers)
         self.data_loader = self.load_data()
+        self.max_length = len(next(iter(self.data_loader))[2][0])
         self.set_output_objects()
 
     def get_special_tokens(self):
@@ -72,6 +73,7 @@ class ESMEmbedder(BaseEmbedder):
         with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
             future = None  # To store the async write operation
             with torch.no_grad():
+                offset = 0
                 for batch_idx, (labels, _, toks) in enumerate(self.data_loader):
                     print(
                         f"Start embedding batch {batch_idx + 1} of {len(self.data_loader)}"
@@ -123,12 +125,13 @@ class ESMEmbedder(BaseEmbedder):
                         "representations": representations,
                         "batch_labels": labels,
                         "pooling_mask": pooling_mask,
-                        "batch_idx": batch_idx,
+                        "offset": offset,
                     }
                     future = executor.submit(
                         self.extract_batch,
                         output_bundle,
                     )
+                    offset += len(toks)
                     futures.append(future)
                     # print total progress
                     end_time = time.time()
@@ -159,12 +162,12 @@ class ESM1Embedder(ESMEmbedder):
         # model, alphabet = pretrained.load_model_and_alphabet(model_name)
         model, alphabet = pretrained.load_model_and_alphabet_hub(model_name)
         model.eval()  # Setting the model to evaluation mode
-        if not self.disable_special_tokens:
-            model.append_eos = True
-            model.prepend_bos = True
-        else:
-            model.append_eos = False
-            model.prepend_bos = False
+        # if not self.disable_special_tokens:
+        #    model.append_eos = True
+        #    model.prepend_bos = True
+        # else:
+        #    model.append_eos = False
+        #    model.prepend_bos = False
 
         num_heads = model.layers[0].self_attn.num_heads
         num_layers = len(model.layers)

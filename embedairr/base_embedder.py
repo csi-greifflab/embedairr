@@ -3,7 +3,6 @@ import csv
 import torch
 import re
 import numpy as np
-import mmap
 from numpy.lib.format import open_memmap
 import inspect
 
@@ -78,7 +77,7 @@ class BaseEmbedder:
             "output_dir": os.path.join(self.output_path, "logits"),
             "shape": (
                 self.num_sequences,
-                self.max_length if self.disable_special_tokens else self.max_length + 2,
+                self.max_length,
             ),
         }
         self.embeddings = {
@@ -93,7 +92,7 @@ class BaseEmbedder:
             "output_dir": os.path.join(self.output_path, "embeddings_unpooled"),
             "shape": (
                 self.num_sequences,
-                self.max_length if self.disable_special_tokens else self.max_length + 2,
+                self.max_length,
                 self.embedding_size,
             ),
         }
@@ -114,16 +113,12 @@ class BaseEmbedder:
             ),
             "shape": (
                 self.num_sequences,
-                self.max_length if self.disable_special_tokens else self.max_length + 2,
-                self.max_length if self.disable_special_tokens else self.max_length + 2,
+                self.max_length,
+                self.max_length,
             ),
             "shape_flattened": (
                 self.num_sequences,
-                (
-                    self.max_length**2
-                    if self.disable_special_tokens
-                    else (self.max_length + 2) ** 2
-                ),
+                (self.max_length**2),
             ),
         }
         self.attention_matrices_average_layers = {
@@ -134,16 +129,12 @@ class BaseEmbedder:
             ),
             "shape": (
                 self.num_sequences,
-                self.max_length if self.disable_special_tokens else self.max_length + 2,
-                self.max_length if self.disable_special_tokens else self.max_length + 2,
+                self.max_length,
+                self.max_length,
             ),
             "shape_flattened": (
                 self.num_sequences,
-                (
-                    self.max_length**2
-                    if self.disable_special_tokens
-                    else (self.max_length + 2) ** 2
-                ),
+                (self.max_length**2),
             ),
         }
         self.attention_matrices_average_all = {
@@ -154,16 +145,12 @@ class BaseEmbedder:
             ),
             "shape": (
                 self.num_sequences,
-                self.max_length if self.disable_special_tokens else self.max_length + 2,
-                self.max_length if self.disable_special_tokens else self.max_length + 2,
+                self.max_length,
+                self.max_length,
             ),
             "shape_flattened": (
                 self.num_sequences,
-                (
-                    self.max_length**2
-                    if self.disable_special_tokens
-                    else (self.max_length + 2) ** 2
-                ),
+                (self.max_length**2),
             ),
         }
         self.cdr3_attention_matrices_average_layers = {
@@ -175,16 +162,12 @@ class BaseEmbedder:
             ),
             "shape": (
                 self.num_sequences,
-                self.max_length if self.disable_special_tokens else self.max_length + 2,
-                self.max_length if self.disable_special_tokens else self.max_length + 2,
+                self.max_length,
+                self.max_length,
             ),
             "shape_flattened": (
                 self.num_sequences,
-                (
-                    self.max_length**2
-                    if self.disable_special_tokens
-                    else (self.max_length + 2) ** 2
-                ),
+                (self.max_length**2),
             ),
         }
         self.cdr3_attention_matrices_average_all = {
@@ -195,16 +178,12 @@ class BaseEmbedder:
             ),
             "shape": (
                 self.num_sequences,
-                self.max_length if self.disable_special_tokens else self.max_length + 2,
-                self.max_length if self.disable_special_tokens else self.max_length + 2,
+                self.max_length,
+                self.max_length,
             ),
             "shape_flattened": (
                 self.num_sequences,
-                (
-                    self.max_length**2
-                    if self.disable_special_tokens
-                    else (self.max_length + 2) ** 2
-                ),
+                (self.max_length**2),
             ),
         }
 
@@ -449,13 +428,13 @@ class BaseEmbedder:
     def extract_logits(
         self,
         logits,
-        batch_idx,
+        offset,
     ):
         for layer in self.layers:
             tensor = logits[layer - 1]
             if self.batch_writing:
                 output_file = self.logits["output_data"][layer]
-                self.write_batch_to_disk(output_file, tensor, batch_idx)
+                self.write_batch_to_disk(output_file, tensor, offset)
             else:
                 self.logits["output_data"][layer].extend(tensor)
 
@@ -464,7 +443,7 @@ class BaseEmbedder:
         representations,
         batch_labels,
         pooling_mask,
-        batch_idx,
+        offset,
     ):
         for layer in self.layers:
             tensor = torch.stack(
@@ -480,7 +459,7 @@ class BaseEmbedder:
             )
             if self.batch_writing:
                 output_file = self.embeddings["output_data"][layer]
-                self.write_batch_to_disk(output_file, tensor, batch_idx)
+                self.write_batch_to_disk(output_file, tensor, offset)
             else:
                 self.embeddings["output_data"][layer].extend(tensor)
 
@@ -488,7 +467,7 @@ class BaseEmbedder:
         self,
         representations,
         batch_labels,
-        batch_idx,
+        offset,
     ):
         if not self.discard_padding:
             for layer in self.layers:
@@ -497,7 +476,7 @@ class BaseEmbedder:
                 )
                 if self.batch_writing:
                     output_file = self.embeddings_unpooled["output_data"][layer]
-                    self.write_batch_to_disk(output_file, tensor, batch_idx)
+                    self.write_batch_to_disk(output_file, tensor, offset)
                 else:
                     self.embeddings_unpooled["output_data"][layer].extend(tensor)
         else:  # TODO remove padding tokens
@@ -512,7 +491,7 @@ class BaseEmbedder:
         self,
         attention_matrices,
         batch_labels,
-        batch_idx,
+        offset,
     ):
         for layer in self.layers:
             for head in range(self.num_heads):
@@ -528,7 +507,7 @@ class BaseEmbedder:
                     output_file = self.attention_matrices_all_heads["output_data"][
                         layer
                     ][head]
-                    self.write_batch_to_disk(output_file, tensor, batch_idx)
+                    self.write_batch_to_disk(output_file, tensor, offset)
                 else:
                     self.attention_matrices_all_heads["output_data"][layer][
                         head
@@ -538,7 +517,7 @@ class BaseEmbedder:
         self,
         attention_matrices,
         batch_labels,
-        batch_idx,
+        offset,
     ):
         for layer in self.layers:
             tensor = torch.stack(
@@ -553,7 +532,7 @@ class BaseEmbedder:
                 output_file = self.attention_matrices_average_layers["output_data"][
                     layer
                 ]
-                self.write_batch_to_disk(output_file, tensor, batch_idx)
+                self.write_batch_to_disk(output_file, tensor, offset)
             else:
                 self.attention_matrices_average_layers["output_data"][layer].extend(
                     tensor
@@ -563,7 +542,7 @@ class BaseEmbedder:
         self,
         attention_matrices,
         batch_labels,
-        batch_idx,
+        offset,
     ):
         tensor = torch.stack(
             [
@@ -575,7 +554,7 @@ class BaseEmbedder:
             tensor = tensor.flatten(start_dim=1)
         if self.batch_writing:
             output_file = self.attention_matrices_average_all["output_data"]
-            self.write_batch_to_disk(output_file, tensor, batch_idx)
+            self.write_batch_to_disk(output_file, tensor, offset)
         else:
             self.attention_matrices_average_all["output_data"].extend(tensor)
 
@@ -635,7 +614,7 @@ class BaseEmbedder:
         representations,
         batch_labels,
         pooling_mask,
-        batch_idx,
+        offset,
     ):
         for layer in self.layers:
             tensor = []
@@ -651,16 +630,15 @@ class BaseEmbedder:
             tensor = torch.stack(tensor)
             if self.batch_writing:
                 output_file = self.cdr3_extracted["output_data"][layer]
-                self.write_batch_to_disk(output_file, tensor, batch_idx)
+                self.write_batch_to_disk(output_file, tensor, offset)
             else:
                 self.cdr3_extracted["output_data"][layer].extend(tensor)
 
-    def write_batch_to_disk(self, mmapped_array, tensor, batch_idx):
-        batch_size = tensor.shape[0]
+    def write_batch_to_disk(self, mmapped_array, tensor, offset):
         tensor = tensor.contiguous().cpu().numpy()
         # mmapped_array[batch_idx * batch_size : (batch_idx + 1) * batch_size] = tensor
-        mmapped_array[batch_idx : batch_idx + batch_size, ...] = tensor
-
+        # mmapped_array[batch_idx : batch_idx + batch_size, ...] = tensor
+        mmapped_array[offset : offset + tensor.shape[0], ...] = tensor
         mmapped_array.flush()
 
     def export_to_disk(self):

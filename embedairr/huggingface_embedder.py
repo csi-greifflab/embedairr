@@ -63,6 +63,7 @@ class HuggingfaceEmbedder(BaseEmbedder):
         with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
             future = None  # To store the async write operation
             with torch.no_grad():
+                offset = 0
                 for batch_idx, batch in enumerate(self.data_loader):
                     start_time = time.time()
                     print(
@@ -110,9 +111,10 @@ class HuggingfaceEmbedder(BaseEmbedder):
                         "representations": representations,
                         "batch_labels": labels,
                         "pooling_mask": pooling_mask,
-                        "batch_idx": batch_idx,
+                        "offset": offset,
                     }
                     future = executor.submit(self.extract_batch, output_bundle)
+                    offset += len(input_ids)
                     futures.append(future)
                     end_time = time.time()
                     sequences_per_second = self.batch_size / (end_time - start_time)
@@ -150,6 +152,7 @@ class Antiberta2Embedder(HuggingfaceEmbedder):
         )
         self.layers = self.load_layers(self.layers)
         self.data_loader = self.load_data(self.sequences_gapped)
+        self.max_length = next(iter(self.data_loader))[0].shape[1]
         self.sequences = {
             sequence_id: sequence_aa.replace(" ", "")
             for sequence_id, sequence_aa in self.sequences_gapped.items()
