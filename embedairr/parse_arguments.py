@@ -118,7 +118,7 @@ def parse_arguments():
         "--batch_size",
         type=int,
         default=1024,
-        help="Batch size for loading sequences. Default is 1024.",
+        help="Number of tokens (not sequences!) per batch. Default is 1024.",
     )
     parser.add_argument(
         "--discard_padding",
