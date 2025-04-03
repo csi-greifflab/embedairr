@@ -76,7 +76,7 @@ def parse_arguments():
         "--layers",
         type=str2ints,
         nargs="*",
-        default=[-1],  # TODO: add option to return all layers
+        default=[[-1]],  # TODO: add option to return all layers
         help="Representation layers to extract from the model. Default is the last layer. Example: argument '--layers -1 6' will output the last layer and the sixth layer.",
     )
     parser.add_argument(
