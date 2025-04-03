@@ -5,10 +5,31 @@ import re
 import numpy as np
 from numpy.lib.format import open_memmap
 import inspect
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import psutil
+import gc
+from embedairr.utils import flush_memmaps, MemoryProfiler
+import tracemalloc
+import warnings
+
+
+tracemalloc.start()
+
+
+def debug_object_counts():
+    from collections import Counter
+
+    objs = gc.get_objects()
+    counts = Counter(type(o).__name__ for o in objs)
+    print("Top memory-holding object types:")
+    for objtype, count in counts.most_common(10):
+        print(f"{objtype}: {count}")
 
 
 class BaseEmbedder:
     def __init__(self, args):
+        self.ram_limit = args.ram_limit
         self.fasta_path = args.fasta_path
         self.model_link = args.model_name
         self.disable_special_tokens = args.disable_special_tokens
@@ -25,7 +46,7 @@ class BaseEmbedder:
             self.output_prefix = args.experiment_name
         self.cdr3_path = args.cdr3_path
         self.context = args.context
-        self.layers = list(map(int, args.layers.split()))
+        self.layers = [j for i in args.layers for j in i] if args.layers else None
         self.cdr3_dict = self.load_cdr3(args.cdr3_path)
         self.batch_size = args.batch_size
         self.max_length = args.max_length
@@ -48,25 +69,7 @@ class BaseEmbedder:
         else:
             self.return_embeddings = True
         self.batch_writing = args.batch_writing
-        if self.batch_writing:
-            self.num_workers = args.num_workers
-
-    def check_input_tokens(self, valid_tokens, sequences, gaps=False):
-        print("Checking input sequences for invalid tokens...")
-        for i, (label, sequence) in enumerate(sequences.items()):
-            if gaps:
-                sequence = sequence.split()
-            else:
-                sequence = re.findall(r"<.*?>|.", sequence)
-            if not set(sequence).issubset(valid_tokens):
-                # find invalid tokens
-                invalid_tokens = set(sequence) - valid_tokens
-                raise ValueError(
-                    f"Invalid tokens in sequence {label}. Please check the alphabet used by the model."
-                )
-            print(f"Processed {i + 1} out of {len(sequences)} sequences", end="\r")
-
-        print("\nNo invalid tokens in input sequences.")
+        self.num_workers = args.num_workers if self.batch_writing else 1
 
     def set_output_objects(self):
         """Initialize output objects."""
@@ -223,6 +226,7 @@ class BaseEmbedder:
         return output_types
 
     def preallocate_disk_space(self, output_type):
+        file_list = []
         np_dtype = np.float16  # TODO make optional
         if "attention" in output_type and "cdr3" not in output_type:
             shape = getattr(self, output_type)["shape_flattened"]
@@ -231,6 +235,7 @@ class BaseEmbedder:
                     getattr(self, output_type)["output_dir"],
                     f"{self.output_prefix}_{self.model_name}_{output_type}.npy",
                 )
+                file_list.append(output_file)
                 # Save it to disk
                 getattr(self, output_type)["output_data"] = open_memmap(
                     output_file, mode="w+", dtype=np_dtype, shape=shape
@@ -241,6 +246,7 @@ class BaseEmbedder:
                         getattr(self, output_type)["output_dir"],
                         f"{self.output_prefix}_{self.model_name}_{output_type}_layer_{layer}.npy",
                     )
+                    file_list.append(output_file)
                     # Save it to disk
                     getattr(self, output_type)["output_data"][layer] = open_memmap(
                         output_file, mode="w+", dtype=np_dtype, shape=shape
@@ -252,6 +258,7 @@ class BaseEmbedder:
                             getattr(self, output_type)["output_dir"],
                             f"{self.output_prefix}_{self.model_name}_{output_type}_layer_{layer}_head_{head + 1}.npy",
                         )
+                        file_list.append(output_file)
                         # Save it to disk
                         getattr(self, output_type)["output_data"][layer][head] = (
                             open_memmap(
@@ -265,6 +272,7 @@ class BaseEmbedder:
                     getattr(self, output_type)["output_dir"],
                     f"{self.output_prefix}_{self.model_name}_{output_type}_layer_{layer}.npy",
                 )
+                file_list.append(output_file)
                 # Save it to disk
                 getattr(self, output_type)["output_data"][layer] = open_memmap(
                     output_file, mode="w+", dtype=np_dtype, shape=shape
@@ -276,6 +284,7 @@ class BaseEmbedder:
                     getattr(self, output_type)["output_dir"],
                     f"{self.output_prefix}_{self.model_name}_{output_type}_layer_{layer}.npy",
                 )
+                file_list.append(output_file)
                 # Save it to disk
                 getattr(self, output_type)["output_data"][layer] = open_memmap(
                     output_file, mode="w+", dtype=np_dtype, shape=shape
@@ -285,73 +294,7 @@ class BaseEmbedder:
                 f"Output type {output_type} not recognized. Please choose from: 'embeddings', 'embeddings_unpooled', 'attention_matrices_all_heads', 'attention_matrices_average_layers', 'attention_matrices_average_all', 'cdr3_extracted'"
             )
         print(f"Preallocated disk space for {output_type}")
-
-    def fasta_to_dict(self, fasta_path, gaps=False, padding=False):
-        """Convert FASTA file into a dictionary."""
-        print("Loading and batching input sequences...")
-
-        seq_dict = dict()
-        sequence_id = None
-        sequence_aa = []
-
-        def _flush_current_seq():
-            nonlocal sequence_id, sequence_aa
-            if sequence_id is None:
-                return
-            seq = "".join(sequence_aa)
-            if gaps:
-                seq_dict[sequence_id] = " ".join(
-                    re.findall(r"\[.*?\]|.", seq)
-                )  # split sequences by space except for special tokens in brackets
-            else:
-                seq_dict[sequence_id] = seq
-            sequence_id = None
-            sequence_aa = []
-
-        with open(fasta_path, "r") as f:
-            for line_idx, line in enumerate(f):
-                line = line.strip()
-                if line.startswith(">"):
-                    _flush_current_seq()
-                    line = line[1:].strip()
-                    if len(line) > 0:
-                        sequence_id = line
-                    else:
-                        sequence_id = (
-                            f"seqnum{line_idx:09d}"  # if no id, use line number
-                        )
-                else:
-                    sequence_aa.append(line)
-
-        _flush_current_seq()
-
-        if gaps:  # if gaps, split sequences by space
-            longest_sequence = max(len(seq.split()) for seq in seq_dict.values())
-        else:  # if no gaps, split sequences by amino acids and special tokens
-            longest_sequence = max(
-                len(re.findall(r"<.*?>|.", seq)) for seq in seq_dict.values()
-            )
-
-        if self.max_length == "max_length":
-            self.max_length = longest_sequence
-        elif self.max_length < longest_sequence:
-            # raise warning
-            print(
-                f"Warning: Longest sequence with length {longest_sequence} is longer than the specified max_length {self.max_length} for padding"
-            )
-            self.max_length = longest_sequence
-        if not padding:
-            return seq_dict, None
-        else:
-            padded_seq_dict = dict()
-            for label, sequence in seq_dict.items():
-                if len(sequence) < self.max_length:
-                    padded_seq_dict[label] = sequence + "<pad>" * (
-                        self.max_length - len(re.findall(r"<.*?>|.", sequence))
-                    )
-                else:
-                    padded_seq_dict[label] = sequence
-            return seq_dict, padded_seq_dict
+        return file_list
 
     def load_cdr3(self, cdr3_path):
         """Load CDR3 sequences and store in a dictionary."""
@@ -364,9 +307,73 @@ class BaseEmbedder:
             return None
 
     def embed(self):
-        raise NotImplementedError(
-            "This method should be implemented in the child class"
-        )
+        # Multithreading to overlap computation and writing
+        futures = []
+        with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+            future = None  # To store the async write operation
+            with torch.no_grad():
+                offset = 0
+                for batch_idx, (labels, _, toks, attention_mask) in enumerate(
+                    self.data_loader
+                ):
+                    start_time = time.time()
+                    print(
+                        f"Start embedding batch {batch_idx + 1} of {len(self.data_loader)}"
+                    )
+                    toks = toks.to(self.device, non_blocking=True)
+                    if not attention_mask == None:
+                        attention_mask = attention_mask.to(
+                            self.device, non_blocking=True
+                        )
+                    pooling_mask = self.mask_special_tokens(
+                        toks, self.special_tokens
+                    ).cpu()  # mask special tokens to avoid diluting signal when pooling embeddings
+
+                    logits, representations, attention_matrices = self.compute_outputs(
+                        self.model,
+                        toks,
+                        attention_mask,
+                        self.return_embeddings,
+                        self.return_contacts,
+                        self.return_logits,
+                    )
+                    torch.cuda.empty_cache()
+
+                    output_bundle = {
+                        "logits": logits,
+                        "attention_matrices": attention_matrices,
+                        "representations": representations,
+                        "batch_labels": labels,
+                        "pooling_mask": pooling_mask,
+                        "offset": offset,
+                    }
+                    future = executor.submit(self.extract_batch, output_bundle)
+                    offset += len(toks)
+                    new_futures = []
+                    for f in futures:
+                        if f.done():
+                            try:
+                                f.result()  # ⚠️ MUST call this to release memory
+                            except Exception as e:
+                                print(f"[Future Exception] {e}")
+                            del f  # explicitly delete to release reference
+                        else:
+                            new_futures.append(f)
+                    futures = new_futures
+                    futures.append(future)
+                    gc.collect()
+                    self.sequence_labels.extend(labels)
+                    end_time = time.time()
+                    sequences_per_second = len(labels) / (end_time - start_time)
+                    time_remaining = (
+                        len(self.sequences) - offset
+                    ) / sequences_per_second
+                    print(
+                        f"Processed {self.model_name}: {len(self.sequence_labels)} out of {len(self.sequences)} sequences ({sequences_per_second:.2f} sequences per second). Estimated time remaining: {time_remaining:.2f} seconds",
+                    )
+            for future in as_completed(futures):  # wait for all futures to complete
+                future.result()
+            print("Finished extracting embeddings")
 
     def load_data(self):
         raise NotImplementedError(
@@ -409,6 +416,10 @@ class BaseEmbedder:
                 k: v for k, v in output_bundle.items() if k in sig.parameters
             }
             getattr(self, output_type)["method"](**needed_args)
+        # clear the output bundle to free up memory
+        output_bundle.clear()
+        del output_bundle
+        torch.cuda.empty_cache()
 
     def mask_special_tokens(self, input_tensor, special_tokens=None):
         """
@@ -635,11 +646,19 @@ class BaseEmbedder:
                 self.cdr3_extracted["output_data"][layer].extend(tensor)
 
     def write_batch_to_disk(self, mmapped_array, tensor, offset):
-        tensor = tensor.contiguous().cpu().numpy()
-        # mmapped_array[batch_idx * batch_size : (batch_idx + 1) * batch_size] = tensor
-        # mmapped_array[batch_idx : batch_idx + batch_size, ...] = tensor
-        mmapped_array[offset : offset + tensor.shape[0], ...] = tensor
-        mmapped_array.flush()
+        try:
+            tensor_np = (
+                tensor.contiguous().cpu().numpy()
+            )  # convert to numpy array for memory mapping
+            del tensor
+            batch_size = tensor_np.shape[0]
+            mmapped_array[offset : offset + batch_size, ...] = tensor_np
+            # mmapped_array.flush()
+            return None
+        finally:
+            del tensor_np
+            gc.collect()
+            return None
 
     def export_to_disk(self):
         """Stack representations of each layer into a single tensor and save to output file."""
@@ -792,7 +811,8 @@ class BaseEmbedder:
         if self.batch_writing:
             print("Preallocating disk space...")
             for output_type in self.output_types:
-                self.preallocate_disk_space(output_type)
+                global memmap_file_list
+                memmap_file_list = self.preallocate_disk_space(output_type)
             print("Preallocated disk space")
         print("Created output directories")
 

@@ -1,32 +1,5 @@
 import argparse
-from embedairr.model_selecter import select_model
-
-supported_models = [
-    "esm1_t34_670M_UR50S",
-    "esm1_t34_670M_UR50D",
-    "esm1_t34_670M_UR100",
-    "esm1_t12_85M_UR50S",
-    "esm1_t6_43M_UR50S",
-    "esm1b_t33_650M_UR50S",
-    #'esm_msa1_t12_100M_UR50S',
-    #'esm_msa1b_t12_100M_UR50S',
-    "esm1v_t33_650M_UR90S_1",
-    "esm1v_t33_650M_UR90S_2",
-    "esm1v_t33_650M_UR90S_3",
-    "esm1v_t33_650M_UR90S_4",
-    "esm1v_t33_650M_UR90S_5",
-    #'esm_if1_gvp4_t16_142M_UR50',
-    "esm2_t6_8M_UR50D",
-    "esm2_t12_35M_UR50D",
-    "esm2_t30_150M_UR50D",
-    "esm2_t33_650M_UR50D",
-    "esm2_t36_3B_UR50D",
-    "esm2_t48_15B_UR50D",
-    "Rostlab/prot_t5_xl_half_uniref50-enc",
-    "Rostlab/ProstT5",
-    "alchemab/antiberta2-cssp",
-    "alchemab/antiberta2",
-]
+from embedairr.model_selecter import select_model, supported_models
 
 
 def str2bool(value):
@@ -38,6 +11,24 @@ def str2bool(value):
         return False
     else:
         raise argparse.ArgumentTypeError("Boolean value expected.")
+
+
+def str2ints(value):
+    """Convert a string to a list of integers."""
+    if isinstance(value, str):
+        if value.lower() == "all":
+            return None
+        elif value.lower() == "last":
+            return [-1]
+        else:
+            try:
+                return [int(x) for x in value.split(" ")]
+            except ValueError:
+                raise argparse.ArgumentTypeError(
+                    "Invalid input. Expected integer(s) or spaced list of integers or 'all' or 'last'."
+                )
+    elif isinstance(value, int):
+        return [value]
 
 
 # Parsing command-line arguments for input and output file paths
@@ -83,9 +74,9 @@ def parse_arguments():
     )
     parser.add_argument(
         "--layers",
-        type=str,
-        nargs="?",
-        default="-1",  # TODO: add option to return all layers
+        type=str2ints,
+        nargs="*",
+        default=[-1],  # TODO: add option to return all layers
         help="Representation layers to extract from the model. Default is the last layer. Example: argument '--layers -1 6' will output the last layer and the sixth layer.",
     )
     parser.add_argument(
@@ -158,6 +149,12 @@ def parse_arguments():
         choices=[True, False],
         default=False,
         help="Disable special tokens in the model. Default is False.",
+    )
+    parser.add_argument(
+        "--ram_limit",
+        type=int,
+        default=32,
+        help="RAM limit in GB for memory usage to buffer outputs for disk writing. Program will pause output computation and flush outputs to disk until under limit. Default is 32.",
     )
 
     # TODO add experiment name
