@@ -7,24 +7,8 @@ from numpy.lib.format import open_memmap
 import inspect
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import psutil
 import gc
 from embedairr.utils import flush_memmaps, MemoryProfiler
-import tracemalloc
-import warnings
-
-
-tracemalloc.start()
-
-
-def debug_object_counts():
-    from collections import Counter
-
-    objs = gc.get_objects()
-    counts = Counter(type(o).__name__ for o in objs)
-    print("Top memory-holding object types:")
-    for objtype, count in counts.most_common(10):
-        print(f"{objtype}: {count}")
 
 
 class BaseEmbedder:
@@ -70,6 +54,7 @@ class BaseEmbedder:
             self.return_embeddings = True
         self.batch_writing = args.batch_writing
         self.num_workers = args.num_workers if self.batch_writing else 1
+        self.log_memory = args.log_memory
 
     def set_output_objects(self):
         """Initialize output objects."""
@@ -308,6 +293,9 @@ class BaseEmbedder:
 
     def embed(self):
         # Multithreading to overlap computation and writing
+        # process = psutil.Process()
+        if self.log_memory:
+            profiler = MemoryProfiler(memmap_file_list, "memory_log.csv")
         futures = []
         with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
             future = None  # To store the async write operation
@@ -316,6 +304,31 @@ class BaseEmbedder:
                 for batch_idx, (labels, _, toks, attention_mask) in enumerate(
                     self.data_loader
                 ):
+                    if self.log_memory:
+                        profiler.log(tag=f"Before batch {batch_idx}")
+                    """
+                    while process.memory_info().rss / 1e9 > self.ram_limit:
+                        print(
+                            f"RAM usage exceeded {self.ram_limit:.2f} GB. Current usage: {process.memory_info().rss / 1e9}GB Flushing outputs to disk...",
+                            end="\r",
+                        )
+                        debug_object_counts()
+                        time.sleep(1)
+                        for output_type in self.output_types:
+                            flush_memmaps(getattr(self, output_type)["output_data"])
+                        if futures is not None:
+                            new_futures = []
+                            for f in futures:
+                                if f.done():
+                                    try:
+                                        f.result()  # ⚠️ MUST call this to release memory
+                                    except Exception as e:
+                                        print(f"[Future Exception] {e}")
+                                    del f  # explicitly delete to release reference
+                                else:
+                                    new_futures.append(f)
+                            futures = new_futures
+                    """
                     start_time = time.time()
                     print(
                         f"Start embedding batch {batch_idx + 1} of {len(self.data_loader)}"
