@@ -1,5 +1,5 @@
-from embedairr.esm_embedder import ESMEmbedder
-from embedairr.huggingface_embedder import T5Embedder, Antiberta2Embedder
+from embedairr.embedders.esm_embedder import ESMEmbedder
+from embedairr.embedders.huggingface_embedder import T5Embedder, Antiberta2Embedder
 
 
 def select_model(model_name):
