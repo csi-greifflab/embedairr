@@ -5,7 +5,7 @@ from embedairr.parse_arguments import parse_arguments
 def main():
     args = parse_arguments()
     if args.batch_writing:
-        if "false" not in args.extract_cdr3_embeddings:
+        if "false" not in args.extract_cdr3_attention_matrices:
             raise ValueError(
                 "Batch writing is not supported with CDR3 attention matrices. Set '--batch_writing False' to disable."
             )

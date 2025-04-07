@@ -30,7 +30,9 @@ class BaseEmbedder:
             self.output_prefix = args.experiment_name
         self.cdr3_path = args.cdr3_path
         self.context = args.context
-        self.layers = [j for i in args.layers for j in i] if args.layers else None
+        self.layers = (
+            [j for i in args.layers for j in i] if args.layers != [None] else None
+        )
         self.cdr3_dict = self.load_cdr3(args.cdr3_path)
         self.batch_size = args.batch_size
         self.max_length = args.max_length
@@ -250,7 +252,7 @@ class BaseEmbedder:
                                 output_file, mode="w+", dtype=np_dtype, shape=shape
                             )
                         )
-        elif "embeddings" in output_type:
+        elif "embeddings" in output_type or "cdr3_extracted" in output_type:
             shape = getattr(self, output_type)["shape"]
             for layer in self.layers:
                 output_file = os.path.join(
@@ -301,7 +303,7 @@ class BaseEmbedder:
             future = None  # To store the async write operation
             with torch.no_grad():
                 offset = 0
-                for batch_idx, (labels, _, toks, attention_mask) in enumerate(
+                for batch_idx, (labels, strs, toks, attention_mask) in enumerate(
                     self.data_loader
                 ):
                     if self.log_memory:
@@ -341,7 +343,6 @@ class BaseEmbedder:
                     pooling_mask = self.mask_special_tokens(
                         toks, self.special_tokens
                     ).cpu()  # mask special tokens to avoid diluting signal when pooling embeddings
-
                     logits, representations, attention_matrices = self.compute_outputs(
                         self.model,
                         toks,
@@ -359,6 +360,7 @@ class BaseEmbedder:
                         "batch_labels": labels,
                         "pooling_mask": pooling_mask,
                         "offset": offset,
+                        "special_tokens": not self.disable_special_tokens,
                     }
                     future = executor.submit(self.extract_batch, output_bundle)
                     offset += len(toks)
@@ -403,9 +405,10 @@ class BaseEmbedder:
             "This method should be implemented in the child class"
         )
 
-    def get_cdr3_positions(self, label, context=0):
+    def get_cdr3_positions(self, label, special_tokens, context=0):
         """Get the start and end positions of the CDR3 sequence in the full sequence."""
         full_sequence = self.sequences[label]
+
         try:
             cdr3_sequence = self.cdr3_dict[label]
         except KeyError:
@@ -414,8 +417,11 @@ class BaseEmbedder:
         cdr3_sequence = cdr3_sequence.replace("-", "")
 
         # get position of cdr3_sequence in sequence
-        start = max(full_sequence.find(cdr3_sequence) - context, 0)
-        end = min(start + len(cdr3_sequence) + context, len(full_sequence))
+        start = max(full_sequence.find(cdr3_sequence) - context, 0) + special_tokens
+        end = (
+            min(start + len(cdr3_sequence) + context, len(full_sequence))
+            + special_tokens
+        )
 
         return start, end
 
@@ -634,16 +640,14 @@ class BaseEmbedder:
         self.cdr3_attention_matrices_average_all["output_data"].extend(tensor)
 
     def extract_cdr3(
-        self,
-        representations,
-        batch_labels,
-        pooling_mask,
-        offset,
+        self, representations, batch_labels, pooling_mask, offset, special_tokens
     ):
         for layer in self.layers:
             tensor = []
             for i, label in enumerate(batch_labels):
-                start, end = self.get_cdr3_positions(label, context=self.context)
+                start, end = self.get_cdr3_positions(
+                    label, special_tokens, context=self.context
+                )
                 tensor.extend(
                     (
                         pooling_mask[i, start:end].unsqueeze(-1)

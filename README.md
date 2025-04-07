@@ -10,6 +10,7 @@ EmbedAIRR is a tool for extracting embeddings and attention matrices from protei
     ```
 
 2. Install the required dependencies:
+    Rust tools are required to build some dependencies:
     ```sh
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
     ```

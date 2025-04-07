@@ -1,7 +1,5 @@
-import time
 import os
 import torch
-from concurrent.futures import ThreadPoolExecutor
 import embedairr.utils
 from embedairr.base_embedder import BaseEmbedder
 from transformers import T5EncoderModel, T5Tokenizer
@@ -21,6 +19,9 @@ class HuggingfaceEmbedder(BaseEmbedder):
 
     def load_layers(self, layers):
         """Check if the specified representation layers are valid."""
+        if not layers:
+            layers = [self.model.config.num_hidden_layers]
+            return layers
         assert all(
             -(self.model.config.num_hidden_layers + 1)
             <= i
@@ -37,33 +38,25 @@ class HuggingfaceEmbedder(BaseEmbedder):
     def load_data(self, sequences):
         """Tokenize sequences and create a DataLoader."""
         # Tokenize sequences
-        print("Tokenizing and batching sequences...")
-        dataset = embedairr.utils.HuggingFaceDataset(sequences)
-        batch_sampler = embedairr.utils.HuggingFaceBatchSampler(
-            tokenizer=self.tokenizer,
-            sequences=sequences,
-            token_budget=self.batch_size,  # Max total tokens per batch
-            extra_toks_per_seq=(
-                2 if not self.disable_special_tokens else 0
-            ),  # For CLS and EOS tokens, if needed
+        print("Tokenizing sequences...")
+        dataset = embedairr.utils.HuggingFaceDataset(
+            sequences,
+            self.tokenizer,
+            self.max_length,
             add_special_tokens=not self.disable_special_tokens,
         )
-
-        # Extract input_ids and attention masks directly from the tokens
-        batch_converter = embedairr.utils.HuggingFaceBatchConverter(
-            tokenizer=self.tokenizer,
-            max_length=self.max_length,
-            add_special_tokens=not self.disable_special_tokens,
+        print("Batching sequences...")
+        batch_sampler = embedairr.utils.TokenBudgetBatchSampler(
+            dataset=dataset, token_budget=self.batch_size
         )
         data_loader = torch.utils.data.DataLoader(
             dataset,
             batch_sampler=batch_sampler,
-            collate_fn=batch_converter,
-            num_workers=self.num_workers,
         )
+        max_length = dataset.get_max_encoded_length()
         print("Finished tokenizing and batching sequences")
 
-        return data_loader
+        return data_loader, max_length
 
     def compute_outputs(
         self,
@@ -102,10 +95,8 @@ class HuggingfaceEmbedder(BaseEmbedder):
 class Antiberta2Embedder(HuggingfaceEmbedder):
     def __init__(self, args):
         super().__init__(args)
-        self.sequences_gapped, self.sequences, self.max_length = (
-            embedairr.utils.fasta_to_dict(args.fasta_path, self.max_length, gaps=True)
-        )
-        self.num_sequences = len(self.sequences_gapped)
+        self.sequences = embedairr.utils.fasta_to_dict(args.fasta_path)
+        self.num_sequences = len(self.sequences)
         (
             self.model,
             self.tokenizer,
@@ -115,20 +106,13 @@ class Antiberta2Embedder(HuggingfaceEmbedder):
         ) = self.initialize_model(self.model_link)
         self.valid_tokens = set(self.tokenizer.get_vocab().keys())
         embedairr.utils.check_input_tokens(
-            self.valid_tokens, self.sequences_gapped, gaps=True
+            self.valid_tokens, self.sequences, self.model_name
         )
         self.special_tokens = torch.tensor(
             self.tokenizer.all_special_ids, device=self.device, dtype=torch.int8
         )
         self.layers = self.load_layers(self.layers)
-        self.data_loader = self.load_data(self.sequences_gapped)
-        self.dummy_loader = iter(self.data_loader)
-        self.max_length = next(self.dummy_loader)[2].shape[1]
-        del self.dummy_loader
-        self.sequences = {
-            sequence_id: sequence_aa.replace(" ", "")
-            for sequence_id, sequence_aa in self.sequences_gapped.items()
-        }
+        self.data_loader, self.max_length = self.load_data(self.sequences)
         self.set_output_objects()
 
     def initialize_model(self, model_link="alchemab/antiberta2-cssp"):
@@ -151,9 +135,7 @@ class Antiberta2Embedder(HuggingfaceEmbedder):
 class T5Embedder(HuggingfaceEmbedder):
     def __init__(self, args):
         super().__init__(args)
-        self.sequences, _, self.max_length = self.fasta_to_dict(
-            args.fasta_path, self.max_length, gaps=False
-        )
+        self.sequences = self.fasta_to_dict(args.fasta_path)
         self.num_sequences = len(self.sequences)
         (
             self.model,
@@ -163,17 +145,14 @@ class T5Embedder(HuggingfaceEmbedder):
             self.embedding_size,
         ) = self.initialize_model(self.model_link)
         self.valid_tokens = self.get_valid_tokens()
-        self.check_input_tokens(self.valid_tokens, self.sequences, gaps=False)
+        embedairr.utils.check_input_tokens(
+            self.valid_tokens, self.sequences, self.model_name
+        )
         self.special_tokens = torch.tensor(
             self.tokenizer.all_special_ids, device=self.device, dtype=torch.int8
         )
         self.layers = self.load_layers(self.layers)
-        self.data_loader = self.load_data(self.sequences)
-        self.dummy_loader = iter(self.data_loader)  # get a dummy batch
-        self.max_length = next(self.dummy_loader)[2].shape[
-            1
-        ]  # update max_length depending on special tokens
-        del self.dummy_loader
+        self.data_loader, self.max_length = self.load_data(self.sequences)
         self.set_output_objects()
 
     def get_valid_tokens(self):

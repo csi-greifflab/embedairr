@@ -9,138 +9,25 @@ import numpy as np
 import tracemalloc
 
 
-class ESMBatchConverter(object):
-    """Callable to convert an unprocessed (labels + strings) batch to a
-    processed (labels + tensor) batch.
-    """
-
-    def __init__(self, alphabet, truncation_seq_length: int = None):
-        self.alphabet = alphabet
-        self.truncation_seq_length = truncation_seq_length
-
-    def __call__(self, raw_batch: Sequence[Tuple[str, str]]):
-        # RoBERTa uses an eos token, while ESM-1 does not.
-        batch_size = len(raw_batch)
-        batch_labels, seq_str_list = zip(*raw_batch)
-        seq_encoded_list = [self.alphabet.encode(seq_str) for seq_str in seq_str_list]
-        if self.truncation_seq_length:
-            seq_encoded_list = [
-                seq_str[: self.truncation_seq_length] for seq_str in seq_encoded_list
-            ]
-        max_len = max(len(seq_encoded) for seq_encoded in seq_encoded_list)
-        tokens = torch.empty(
-            (
-                batch_size,
-                max_len
-                + int(self.alphabet.prepend_bos)
-                + int(self.alphabet.append_eos),
-            ),
-            dtype=torch.int64,
-        )
-        tokens.fill_(self.alphabet.padding_idx)
-        labels = []
-        strs = []
-
-        for i, (label, seq_str, seq_encoded) in enumerate(
-            zip(batch_labels, seq_str_list, seq_encoded_list)
-        ):
-            labels.append(label)
-            strs.append(seq_str)
-            if self.alphabet.prepend_bos:
-                tokens[i, 0] = self.alphabet.cls_idx
-            seq = torch.tensor(seq_encoded, dtype=torch.int64)
-            tokens[
-                i,
-                int(self.alphabet.prepend_bos) : len(seq_encoded)
-                + int(self.alphabet.prepend_bos),
-            ] = seq
-            if self.alphabet.append_eos:
-                tokens[i, len(seq_encoded) + int(self.alphabet.prepend_bos)] = (
-                    self.alphabet.eos_idx
-                )
-
-        return labels, strs, tokens, None
-
-
-class HuggingFaceBatchConverter:
-    def __init__(self, tokenizer, max_length=512, add_special_tokens=True):
-        self.tokenizer = tokenizer
-        self.max_length = max_length
-        self.add_special_tokens = add_special_tokens
-
-    def __call__(self, raw_batch: Sequence[Tuple[str, str]]):
-        labels, strs = zip(*raw_batch)
-
-        tokens = self.tokenizer(
-            list(strs),
-            truncation=False,
-            padding="max_length",
-            return_tensors="pt",
-            add_special_tokens=self.add_special_tokens,
-            max_length=self.max_length,
-        )
-
-        return list(labels), list(strs), tokens["input_ids"], tokens["attention_mask"]
-
-
-class HuggingFaceBatchSampler:
-    def __init__(
-        self,
-        tokenizer,
-        sequences,
-        token_budget: int,
-        extra_toks_per_seq: int = 0,
-        add_special_tokens=True,
-    ):
-        """
-        sequences: dict of {label: sequence_string}
-        token_budget: max total tokens per batch
-        extra_toks_per_seq: e.g., 2 for [CLS] and [SEP]/[EOS]
-        """
-        self.tokenizer = tokenizer
-        self.sequences = list(sequences.items())
+class TokenBudgetBatchSampler:
+    def __init__(self, dataset, token_budget):
+        self.dataset = dataset
         self.token_budget = token_budget
-        self.extra_toks_per_seq = extra_toks_per_seq
-        self.add_special_tokens = add_special_tokens
 
-        # Compute token lengths for each sequence
-        self.token_lengths = self._compute_token_lengths()
+        # Assume all sequences have the same length (already padded)
+        sample_seq_len = len(
+            dataset[0][2]
+        )  # dataset[idx] -> (label, seq_str, toks, mask)
+        self.batch_size = token_budget // sample_seq_len
+
         self.batches = self._create_batches()
 
-    def _compute_token_lengths(self):
-        _, seqs = zip(*self.sequences)
-        lengths = self.tokenizer(
-            list(seqs),
-            add_special_tokens=self.add_special_tokens,
-            return_length=True,
-            truncation=False,
-            padding=False,
-        )["length"]
-        return [l + self.extra_toks_per_seq for l in lengths]
-
     def _create_batches(self):
-        sorted_indices = sorted(
-            range(len(self.sequences)), key=lambda i: self.token_lengths[i]
-        )
-        batches = []
-        batch = []
-        total_tokens = 0
-
-        for idx in sorted_indices:
-            seq_len = self.token_lengths[idx]
-            if total_tokens + seq_len > self.token_budget:
-                if batch:
-                    batches.append(batch)
-                batch = [idx]
-                total_tokens = seq_len
-            else:
-                batch.append(idx)
-                total_tokens += seq_len
-
-        if batch:
-            batches.append(batch)
-
-        return batches
+        indices = list(range(len(self.dataset)))
+        return [
+            indices[i : i + self.batch_size]
+            for i in range(0, len(indices), self.batch_size)
+        ]
 
     def __iter__(self):
         return iter(self.batches)
@@ -150,26 +37,111 @@ class HuggingFaceBatchSampler:
 
 
 class HuggingFaceDataset(Dataset):
-    def __init__(self, sequences):
+    def __init__(self, sequences, tokenizer, max_length, add_special_tokens=True):
         self.data = list(sequences.items())  # (label, seq)
+        self.encoded_data = self.encode_sequences(
+            tokenizer, max_length, add_special_tokens
+        )  # (label, seq, toks, attention_mask)
+
+    def encode_sequences(self, tokenizer, max_length, add_special_tokens):
+        labels, strs = zip(*self.data)
+        strs = self.gap_sequence(strs)
+        max_token_length = max(len(seq.split(" ")) for seq in strs)
+
+        if max_length == "max_length":
+            max_length = max_token_length
+            print(f"Setting max_length to {max_length}.")
+        elif isinstance(max_length, int) and max_length < max_token_length:
+            print(
+                f"max_length {max_length} is less than the length of the longest sequence: {max_token_length}. Setting max_length to {max_token_length}."
+            )
+            max_length = max_token_length
+        encoded = tokenizer(
+            list(strs),
+            truncation=False,
+            padding="max_length",
+            return_tensors="pt",
+            add_special_tokens=add_special_tokens,
+            max_length=max_length,
+        )
+        toks = encoded["input_ids"]
+        attention_masks = encoded["attention_mask"]
+        return list(zip(labels, strs, list(toks), list(attention_masks)))
 
     def __getitem__(self, idx):
-        return self.data[idx]
+        return self.encoded_data[idx]
 
     def __len__(self):
-        return len(self.data)
+        return len(self.encoded_data)
+
+    def gap_sequence(self, sequences: str) -> str:
+        """Space-separated tokenization for RoFormer input."""
+        seqs = [" ".join(re.findall(r"\[.*?\]|.", sequence)) for sequence in sequences]
+        return seqs
+
+    def get_max_encoded_length(self):
+        return max(len(toks) for _, _, toks, _ in self.encoded_data)
 
 
-def check_input_tokens(valid_tokens, sequences, gaps=False):
+class ESMDataset(Dataset):
+    def __init__(
+        self, sequences, alphabet, max_length, prepend_bos=True, append_eos=True
+    ):
+        self.data = list(sequences.items())  # (label, seq)
+        self.encoded_data = self.encode_sequences(
+            alphabet, max_length, prepend_bos=prepend_bos, append_eos=append_eos
+        )  # (label, seq, toks)
+
+    def encode_sequences(self, alphabet, max_length, prepend_bos=True, append_eos=True):
+        labels, strs = zip(*self.data)
+        encoded = [alphabet.encode(seq_str) for seq_str in strs]
+        max_encoded_length = max(len(seq_encoded) for seq_encoded in encoded)
+        if max_length == "max_length":
+            max_length = max_encoded_length
+        elif isinstance(max_length, int) and max_length < max_encoded_length:
+            print(
+                f"max_length {max_length} is less than the length of the longest sequence: {max_encoded_length}. Setting max_length to {max_encoded_length}."
+            )
+        tokens = torch.empty(
+            (len(encoded), max_length + int(prepend_bos) + int(append_eos)),
+            dtype=torch.int64,
+        )
+        tokens.fill_(alphabet.padding_idx)
+        for i, seq_encoded in enumerate(encoded):
+            if prepend_bos:
+                tokens[i, 0] = alphabet.cls_idx
+            seq = torch.tensor(seq_encoded, dtype=torch.int64)
+            tokens[
+                i,
+                int(prepend_bos) : len(seq_encoded) + int(prepend_bos),
+            ] = seq
+            if append_eos:
+                tokens[i, len(seq_encoded) + int(prepend_bos)] = alphabet.eos_idx
+        return list(zip(labels, strs, list(tokens)))
+
+    def __getitem__(self, idx):
+        label, seq_str, toks = self.encoded_data[idx]
+        return label, seq_str, toks, None
+
+    def __len__(self):
+        return len(self.encoded_data)
+
+    def get_max_encoded_length(self):
+        return max(len(toks) for _, _, toks in self.encoded_data)
+
+    def safe_collate(self, batch):
+        labels, seqs, toks, _ = zip(*batch)
+        return list(labels), list(seqs), torch.stack(toks), None
+
+
+def check_input_tokens(valid_tokens, sequences, model_name):
     print("Checking input sequences for invalid tokens...")
     for i, (label, sequence) in enumerate(sequences.items()):
-        if gaps:
-            sequence = sequence.split()
+        if "esm" not in model_name:
+            sequence = re.findall(r"\[.*?\]|.", sequence)
         else:
             sequence = re.findall(r"<.*?>|.", sequence)
         if not set(sequence).issubset(valid_tokens):
-            # find invalid tokens
-            invalid_tokens = set(sequence) - valid_tokens
             raise ValueError(
                 f"Invalid tokens in sequence {label}. Please check the alphabet used by the model."
             )
@@ -178,70 +150,29 @@ def check_input_tokens(valid_tokens, sequences, gaps=False):
     print("\nNo invalid tokens in input sequences.")
 
 
-def fasta_to_dict(fasta_path, max_length, gaps=False, padding=False):
-    """Convert FASTA file into a dictionary."""
-    print("Reading FASTA file...")
-
-    seq_dict = dict()
+def fasta_to_dict(fasta_path):
+    """Convert FASTA file into a dictionary: {id: raw_sequence}."""
+    seq_dict = {}
     sequence_id = None
     sequence_aa = []
 
-    def _flush_current_seq():
+    def flush():
         nonlocal sequence_id, sequence_aa
-        if sequence_id is None:
-            return
-        seq = "".join(sequence_aa)
-        if gaps:
-            seq_dict[sequence_id] = " ".join(
-                re.findall(r"\[.*?\]|.", seq)
-            )  # split sequences by space except for special tokens in brackets
-        else:
-            seq_dict[sequence_id] = seq
-        sequence_id = None
-        sequence_aa = []
+        if sequence_id:
+            seq_dict[sequence_id] = "".join(sequence_aa)
+        sequence_id, sequence_aa = None, []
 
     with open(fasta_path, "r") as f:
         for line_idx, line in enumerate(f):
             line = line.strip()
             if line.startswith(">"):
-                _flush_current_seq()
-                line = line[1:].strip()
-                if len(line) > 0:
-                    sequence_id = line
-                else:
-                    sequence_id = f"seqnum{line_idx:09d}"  # if no id, use line number
+                flush()
+                sequence_id = line[1:] or f"seqnum{line_idx:09d}"
             else:
                 sequence_aa.append(line)
+    flush()
 
-    _flush_current_seq()
-
-    if gaps:  # if gaps, split sequences by space
-        longest_sequence = max(len(seq.split()) for seq in seq_dict.values())
-    else:  # if no gaps, split sequences by amino acids and special tokens
-        longest_sequence = max(
-            len(re.findall(r"<.*?>|.", seq)) for seq in seq_dict.values()
-        )
-
-    if max_length == "max_length":
-        max_length = longest_sequence
-    elif max_length < longest_sequence:
-        # raise warning
-        print(
-            f"Warning: Longest sequence with length {longest_sequence} is longer than the specified max_length {max_length} for padding"
-        )
-        max_length = longest_sequence
-    if not padding:
-        return seq_dict, None, max_length
-    else:
-        padded_seq_dict = dict()
-        for label, sequence in seq_dict.items():
-            if len(sequence) < max_length:
-                padded_seq_dict[label] = sequence + "<pad>" * (
-                    max_length - len(re.findall(r"<.*?>|.", sequence))
-                )
-            else:
-                padded_seq_dict[label] = sequence
-        return seq_dict, padded_seq_dict, max_length
+    return seq_dict
 
 
 def flush_memmaps(obj):
