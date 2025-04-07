@@ -1,6 +1,6 @@
 import torch
 from esm import pretrained
-from embedairr.base_embedder import BaseEmbedder
+from embedairr.embedders.base_embedder import BaseEmbedder
 import embedairr.utils
 
 # torch.set_default_dtype(torch.float16)

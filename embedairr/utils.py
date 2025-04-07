@@ -74,7 +74,7 @@ class HuggingFaceDataset(Dataset):
     def __len__(self):
         return len(self.encoded_data)
 
-    def gap_sequence(self, sequences: str) -> str:
+    def gap_sequence(self, sequences: Sequence[str]) -> Sequence[str]:
         """Space-separated tokenization for RoFormer input."""
         seqs = [" ".join(re.findall(r"\[.*?\]|.", sequence)) for sequence in sequences]
         return seqs

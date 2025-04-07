@@ -417,7 +417,9 @@ class BaseEmbedder:
         cdr3_sequence = cdr3_sequence.replace("-", "")
 
         # get position of cdr3_sequence in sequence
-        start = max(full_sequence.find(cdr3_sequence) - context, 0) + special_tokens
+        start = max(full_sequence.find(cdr3_sequence) - context, 0) + int(
+            special_tokens
+        )
         end = (
             min(start + len(cdr3_sequence) + context, len(full_sequence))
             + special_tokens

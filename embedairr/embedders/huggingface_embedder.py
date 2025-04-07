@@ -1,7 +1,7 @@
 import os
 import torch
 import embedairr.utils
-from embedairr.base_embedder import BaseEmbedder
+from embedairr.embedders.base_embedder import BaseEmbedder
 from transformers import T5EncoderModel, T5Tokenizer
 from transformers import RoFormerTokenizer, RoFormerModel
 
