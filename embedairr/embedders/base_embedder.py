@@ -650,17 +650,15 @@ class BaseEmbedder:
     def extract_cdr3(
         self,
         representations,
-        batch_labels,
         cdr3_mask,
         offset,
-        special_tokens,
     ):
         for layer in self.layers:
             tensor = []
-            for i, _ in enumerate(batch_labels):
+            for i, mask in enumerate(cdr3_mask):
                 tensor.extend(
-                    (cdr3_mask[i].unsqueeze(-1) * representations[layer][i]).sum(0)
-                    / cdr3_mask[i].unsqueeze(-1).sum(0)
+                    (mask.unsqueeze(-1) * representations[layer][i]).sum(0)
+                    / mask.unsqueeze(-1).sum(0)
                 )
             tensor = torch.stack(tensor)
             if self.batch_writing:
