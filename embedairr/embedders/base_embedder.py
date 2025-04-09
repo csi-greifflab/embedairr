@@ -33,7 +33,7 @@ class BaseEmbedder:
         self.layers = (
             [j for i in args.layers for j in i] if args.layers != [None] else None
         )
-        self.cdr3_dict = self.load_cdr3(args.cdr3_path)
+        self.cdr3_dict = self.load_cdr3(args.cdr3_path) if args.cdr3_path else None
         self.batch_size = args.batch_size
         self.max_length = args.max_length
         if torch.cuda.is_available():
@@ -287,7 +287,8 @@ class BaseEmbedder:
         """Load CDR3 sequences and store in a dictionary."""
         if cdr3_path:
             with open(cdr3_path) as f:
-                reader = csv.reader(f)
+                reader = csv.reader(f)  # skip header
+                next(reader)
                 cdr3_dict = {rows[0]: rows[1] for rows in reader}
             return cdr3_dict
         else:
@@ -303,9 +304,13 @@ class BaseEmbedder:
             future = None  # To store the async write operation
             with torch.no_grad():
                 offset = 0
-                for batch_idx, (labels, strs, toks, attention_mask) in enumerate(
-                    self.data_loader
-                ):
+                for batch_idx, (
+                    labels,
+                    strs,
+                    toks,
+                    attention_mask,
+                    cdr3_mask,
+                ) in enumerate(self.data_loader):
                     if self.log_memory:
                         profiler.log(tag=f"Before batch {batch_idx}")
                     """
@@ -359,6 +364,7 @@ class BaseEmbedder:
                         "representations": representations,
                         "batch_labels": labels,
                         "pooling_mask": pooling_mask,
+                        "cdr3_mask": cdr3_mask,
                         "offset": offset,
                         "special_tokens": not self.disable_special_tokens,
                     }
@@ -642,20 +648,19 @@ class BaseEmbedder:
         self.cdr3_attention_matrices_average_all["output_data"].extend(tensor)
 
     def extract_cdr3(
-        self, representations, batch_labels, pooling_mask, offset, special_tokens
+        self,
+        representations,
+        batch_labels,
+        cdr3_mask,
+        offset,
+        special_tokens,
     ):
         for layer in self.layers:
             tensor = []
-            for i, label in enumerate(batch_labels):
-                start, end = self.get_cdr3_positions(
-                    label, special_tokens, context=self.context
-                )
+            for i, _ in enumerate(batch_labels):
                 tensor.extend(
-                    (
-                        pooling_mask[i, start:end].unsqueeze(-1)
-                        * representations[layer][i, start:end]
-                    ).sum(0)
-                    / pooling_mask[i, start:end].unsqueeze(-1).sum(0)
+                    (cdr3_mask[i].unsqueeze(-1) * representations[layer][i]).sum(0)
+                    / cdr3_mask[i].unsqueeze(-1).sum(0)
                 )
             tensor = torch.stack(tensor)
             if self.batch_writing:

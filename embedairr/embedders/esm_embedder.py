@@ -21,11 +21,13 @@ class ESMEmbedder(BaseEmbedder):
             self.append_eos,
         ) = self.initialize_model(self.model_name)
         self.valid_tokens = set(self.alphabet.all_toks)
-        embedairr.utils.check_input_tokens(self.valid_tokens, self.sequences)
+        embedairr.utils.check_input_tokens(
+            self.valid_tokens, self.sequences, self.model_name
+        )
         self.special_tokens = self.get_special_tokens()
         self.layers = self.load_layers(self.layers)
-        self.data_loader, self.max_length = (
-            self.load_data()
+        self.data_loader, self.max_length = self.load_data(
+            self.sequences, self.cdr3_dict
         )  # tokenize and batch sequences and update max_length
         self.set_output_objects()
 
@@ -78,7 +80,7 @@ class ESMEmbedder(BaseEmbedder):
 
     def load_layers(self, layers):
         if not layers:
-            layers = list(range(1, self.model.num_layers + 1, 1))
+            layers = list(range(1, self.model.num_layers + 1))
             return layers
         # Checking if the specified representation layers are valid
         assert all(
@@ -90,11 +92,13 @@ class ESMEmbedder(BaseEmbedder):
         ]
         return layers
 
-    def load_data(self):
+    def load_data(self, sequences, cdr3_dict=None):
         # Creating a dataset from the input fasta file
         print("Tokenizing sequences...")
         dataset = embedairr.utils.ESMDataset(
-            self.sequences,
+            sequences,
+            cdr3_dict,
+            self.context,
             self.alphabet,
             self.max_length,
             self.prepend_bos,
@@ -130,6 +134,7 @@ class ESMEmbedder(BaseEmbedder):
             logits = (
                 outputs["logits"].to(dtype=torch.float16, device="cpu").permute(2, 0, 1)
             )  # permute to match the shape of the representations
+            torch.cuda.empty_cache()
         else:
             logits = None
 
@@ -137,6 +142,7 @@ class ESMEmbedder(BaseEmbedder):
             attention_matrices = (
                 outputs["attentions"].to(dtype=torch.float16).permute(1, 0, 2, 3, 4)
             ).cpu()  # permute to match the shape of the representations
+            torch.cuda.empty_cache()
         else:
             attention_matrices = None
         # Extracting layer representations and moving them to CPU
@@ -145,6 +151,7 @@ class ESMEmbedder(BaseEmbedder):
                 layer: t.to(dtype=torch.float16).cpu()
                 for layer, t in outputs["representations"].items()
             }
+            torch.cuda.empty_cache()
         else:
             representations = None
         return logits, representations, attention_matrices

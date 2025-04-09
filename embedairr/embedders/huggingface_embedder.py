@@ -20,7 +20,7 @@ class HuggingfaceEmbedder(BaseEmbedder):
     def load_layers(self, layers):
         """Check if the specified representation layers are valid."""
         if not layers:
-            layers = [self.model.config.num_hidden_layers]
+            layers = list(range(1, self.model.config.num_hidden_layers + 1))
             return layers
         assert all(
             -(self.model.config.num_hidden_layers + 1)
@@ -35,12 +35,14 @@ class HuggingfaceEmbedder(BaseEmbedder):
         ]
         return layers
 
-    def load_data(self, sequences):
+    def load_data(self, sequences, cdr3_dict):
         """Tokenize sequences and create a DataLoader."""
         # Tokenize sequences
         print("Tokenizing sequences...")
         dataset = embedairr.utils.HuggingFaceDataset(
             sequences,
+            cdr3_dict,
+            self.context,
             self.tokenizer,
             self.max_length,
             add_special_tokens=not self.disable_special_tokens,
@@ -77,6 +79,7 @@ class HuggingfaceEmbedder(BaseEmbedder):
             attention_matrices = torch.stack(outputs.attentions).to(
                 dtype=torch.float16
             )  # stack attention matrices across layers
+            torch.cuda.empty_cache()
         else:
             attention_matrices = None
         if return_embeddings:
@@ -86,6 +89,7 @@ class HuggingfaceEmbedder(BaseEmbedder):
                 )
                 for layer in self.layers
             }
+            torch.cuda.empty_cache()
         else:
             representations = None
         logits = None  # Model doesn't return logits
@@ -112,7 +116,9 @@ class Antiberta2Embedder(HuggingfaceEmbedder):
             self.tokenizer.all_special_ids, device=self.device, dtype=torch.int8
         )
         self.layers = self.load_layers(self.layers)
-        self.data_loader, self.max_length = self.load_data(self.sequences)
+        self.data_loader, self.max_length = self.load_data(
+            self.sequences, self.cdr3_dict
+        )
         self.set_output_objects()
 
     def initialize_model(self, model_link="alchemab/antiberta2-cssp"):
@@ -152,7 +158,9 @@ class T5Embedder(HuggingfaceEmbedder):
             self.tokenizer.all_special_ids, device=self.device, dtype=torch.int8
         )
         self.layers = self.load_layers(self.layers)
-        self.data_loader, self.max_length = self.load_data(self.sequences)
+        self.data_loader, self.max_length = self.load_data(
+            self.sequences, self.cdr3_dict
+        )
         self.set_output_objects()
 
     def get_valid_tokens(self):
