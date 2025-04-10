@@ -6,7 +6,7 @@ import numpy as np
 from numpy.lib.format import open_memmap
 import inspect
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
 import gc
 from embedairr.utils import flush_memmaps, MemoryProfiler
 
@@ -56,6 +56,7 @@ class BaseEmbedder:
             self.return_embeddings = True
         self.batch_writing = args.batch_writing
         self.num_workers = args.num_workers if self.batch_writing else 1
+        self.max_in_flight = self.num_workers * 2
         self.log_memory = args.log_memory
 
     def set_output_objects(self):
@@ -313,29 +314,6 @@ class BaseEmbedder:
                 ) in enumerate(self.data_loader):
                     if self.log_memory:
                         profiler.log(tag=f"Before batch {batch_idx}")
-                    """
-                    while process.memory_info().rss / 1e9 > self.ram_limit:
-                        print(
-                            f"RAM usage exceeded {self.ram_limit:.2f} GB. Current usage: {process.memory_info().rss / 1e9}GB Flushing outputs to disk...",
-                            end="\r",
-                        )
-                        debug_object_counts()
-                        time.sleep(1)
-                        for output_type in self.output_types:
-                            flush_memmaps(getattr(self, output_type)["output_data"])
-                        if futures is not None:
-                            new_futures = []
-                            for f in futures:
-                                if f.done():
-                                    try:
-                                        f.result()  # ⚠️ MUST call this to release memory
-                                    except Exception as e:
-                                        print(f"[Future Exception] {e}")
-                                    del f  # explicitly delete to release reference
-                                else:
-                                    new_futures.append(f)
-                            futures = new_futures
-                    """
                     start_time = time.time()
                     print(
                         f"Start embedding batch {batch_idx + 1} of {len(self.data_loader)}"
@@ -348,14 +326,32 @@ class BaseEmbedder:
                     pooling_mask = self.mask_special_tokens(
                         toks, self.special_tokens
                     ).cpu()  # mask special tokens to avoid diluting signal when pooling embeddings
-                    logits, representations, attention_matrices = self.compute_outputs(
-                        self.model,
-                        toks,
-                        attention_mask,
-                        self.return_embeddings,
-                        self.return_contacts,
-                        self.return_logits,
-                    )
+                    try:
+                        logits, representations, attention_matrices = (
+                            self.compute_outputs(
+                                self.model,
+                                toks,
+                                attention_mask,
+                                self.return_embeddings,
+                                self.return_contacts,
+                                self.return_logits,
+                            )
+                        )
+                    except torch.OutOfMemoryError as e:
+                        print(
+                            f"[GPU memory overflow] {e}. Clearing cache and trying again..."
+                        )
+                        torch.cuda.empty_cache()
+                        logits, representations, attention_matrices = (
+                            self.compute_outputs(
+                                self.model,
+                                toks,
+                                attention_mask,
+                                self.return_embeddings,
+                                self.return_contacts,
+                                self.return_logits,
+                            )
+                        )
                     torch.cuda.empty_cache()
 
                     output_bundle = {
@@ -369,26 +365,52 @@ class BaseEmbedder:
                         "special_tokens": not self.disable_special_tokens,
                     }
                     future = executor.submit(self.extract_batch, output_bundle)
+
+                    del logits, representations, attention_matrices
+                    gc.collect()
+                    torch.cuda.empty_cache()
+
                     offset += len(toks)
+
+                    # Clean up completed futures that returned None or raised exceptions
                     new_futures = []
                     for f in futures:
                         if f.done():
                             try:
-                                f.result()  # ⚠️ MUST call this to release memory
+                                result = f.result()
+                                if result is not None:
+                                    new_futures.append(f)
                             except Exception as e:
                                 print(f"[Future Exception] {e}")
-                            del f  # explicitly delete to release reference
                         else:
                             new_futures.append(f)
                     futures = new_futures
+
+                    # Throttle: wait if we're over the max allowed concurrent tasks
+                    while len(futures) >= self.max_in_flight:
+                        done, not_done = wait(futures, return_when=FIRST_COMPLETED)
+                        for f in done:
+                            try:
+                                result = f.result()
+                                if result is not None:
+                                    not_done.add(f)
+                            except Exception as e:
+                                print(f"[Future Exception] {e}")
+                        futures = list(not_done)
+
+                    # Now safe to append new future
                     futures.append(future)
+
                     gc.collect()
+
                     self.sequence_labels.extend(labels)
+
                     end_time = time.time()
                     sequences_per_second = len(labels) / (end_time - start_time)
                     time_remaining = (
                         len(self.sequences) - offset
                     ) / sequences_per_second
+
                     print(
                         f"Processed {self.model_name}: {len(self.sequence_labels)} out of {len(self.sequences)} sequences ({sequences_per_second:.2f} sequences per second). Estimated time remaining: {time_remaining:.2f} seconds",
                     )
@@ -676,11 +698,12 @@ class BaseEmbedder:
             batch_size = tensor_np.shape[0]
             mmapped_array[offset : offset + batch_size, ...] = tensor_np
             # mmapped_array.flush()
-            return None
+        except Exception as e:
+            print(f"Error while writing batch to disk: {e}")
         finally:
-            del tensor_np
+            if "tensor_np" in locals():
+                del tensor_np
             gc.collect()
-            return None
 
     def export_to_disk(self):
         """Stack representations of each layer into a single tensor and save to output file."""

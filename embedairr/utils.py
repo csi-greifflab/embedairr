@@ -190,8 +190,31 @@ class HuggingFaceDataset(SequenceDictDataset):
 
     def __getitem__(self, idx):
         labels, seqs, toks, attention_masks = self.encoded_data[idx]
-        cdr3_mask = self.cdr3_masks[idx]
-        return labels, seqs, toks, attention_masks, cdr3_mask
+        if self.cdr3_dict:
+            cdr3_masks = self.cdr3_masks[idx]
+            return labels, seqs, toks, attention_masks, cdr3_masks
+        else:
+            return labels, seqs, toks, attention_masks, None
+
+    def safe_collate(self, batch):
+        if self.cdr3_dict:
+            labels, seqs, toks, attention_matrices, cdr3_masks = zip(*batch)
+            return (
+                list(labels),
+                list(seqs),
+                torch.stack(toks),
+                torch.stack(attention_matrices),
+                torch.stack(cdr3_masks),
+            )
+        else:
+            labels, seqs, toks, attention_matrices, _ = zip(*batch)
+            return (
+                list(labels),
+                list(seqs),
+                torch.stack(toks),
+                torch.stack(attention_matrices),
+                None,
+            )
 
     def __len__(self):
         return len(self.data)
@@ -263,12 +286,21 @@ class ESMDataset(SequenceDictDataset):
 
     def safe_collate(self, batch):
         labels, seqs, toks, _, cdr3_masks = zip(*batch)
-        return list(labels), list(seqs), torch.stack(toks), None, cdr3_masks
+        return (
+            list(labels),
+            list(seqs),
+            torch.stack(toks),
+            None,
+            torch.stack(cdr3_masks),
+        )
 
     def __getitem__(self, idx):
         labels, seqs, toks = self.encoded_data[idx]
-        cdr3_masks = self.cdr3_masks[idx]
-        return labels, seqs, toks, None, cdr3_masks
+        if self.cdr3_dict:
+            cdr3_masks = self.cdr3_masks[idx]
+            return labels, seqs, toks, None, cdr3_masks
+        else:
+            return labels, seqs, toks, None, None
 
 
 def check_input_tokens(valid_tokens, sequences, model_name):

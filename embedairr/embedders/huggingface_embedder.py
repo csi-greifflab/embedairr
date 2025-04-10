@@ -52,8 +52,7 @@ class HuggingfaceEmbedder(BaseEmbedder):
             dataset=dataset, token_budget=self.batch_size
         )
         data_loader = torch.utils.data.DataLoader(
-            dataset,
-            batch_sampler=batch_sampler,
+            dataset, batch_sampler=batch_sampler, collate_fn=dataset.safe_collate
         )
         max_length = dataset.get_max_encoded_length()
         print("Finished tokenizing and batching sequences")
