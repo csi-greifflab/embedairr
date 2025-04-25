@@ -76,7 +76,7 @@ class HuggingfaceEmbedder(BaseEmbedder):
         )
         if return_contacts:
             attention_matrices = torch.stack(outputs.attentions).to(
-                dtype=torch.float16
+                device="cpu", dtype=torch.float16
             )  # stack attention matrices across layers
             torch.cuda.empty_cache()
         else:

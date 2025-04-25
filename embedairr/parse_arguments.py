@@ -95,7 +95,7 @@ def parse_arguments():
     )
     parser.add_argument(
         "--extract_cdr3_embeddings",
-        choices=["pooled", "false"],
+        choices=["pooled", "unpooled", "false"],
         default=["false"],
         nargs="+",
         help="Set the CDR3 embedding return types. Choose one or more from: 'pooled', 'false'. Requires --cdr3_path to be set. Default is 'false'.",
@@ -160,6 +160,13 @@ def parse_arguments():
         "--log_memory",
         action="store_true",
         help="Log memory usage to file. Default is False.",
+    )
+    parser.add_argument(
+        "--flatten",
+        type=str2bool,
+        choices=[True, False],
+        default=True,
+        help="Flatten the output tensors. Default is False.",
     )
 
     # TODO add experiment name

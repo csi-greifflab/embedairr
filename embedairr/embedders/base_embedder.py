@@ -6,9 +6,9 @@ import numpy as np
 from numpy.lib.format import open_memmap
 import inspect
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
 import gc
-from embedairr.utils import flush_memmaps, MemoryProfiler
+from embedairr.utils import MultiIODispatcher, MemoryProfiler
+from datetime import timedelta
 
 
 class BaseEmbedder:
@@ -300,122 +300,87 @@ class BaseEmbedder:
         # process = psutil.Process()
         if self.log_memory:
             profiler = MemoryProfiler(memmap_file_list, "memory_log.csv")
-        futures = []
-        with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
-            future = None  # To store the async write operation
-            with torch.no_grad():
-                offset = 0
-                for batch_idx, (
-                    labels,
-                    strs,
-                    toks,
-                    attention_mask,
-                    cdr3_mask,
-                ) in enumerate(self.data_loader):
-                    if self.log_memory:
-                        profiler.log(tag=f"Before batch {batch_idx}")
-                    start_time = time.time()
-                    print(
-                        f"Start embedding batch {batch_idx + 1} of {len(self.data_loader)}"
+        if self.batch_writing:
+            # Start centralized I/O dispatcher
+            self.io_dispatcher = MultiIODispatcher(
+                self.memmap_registry,
+                num_workers=self.num_workers,  # Adjust depending on your storage backend
+                flush_bytes_limit=8 * 1024**3,  # Total per thread
+            )
+        with torch.no_grad():
+            offset = 0
+            for batch_idx, (
+                labels,
+                strs,
+                toks,
+                attention_mask,
+                cdr3_mask,
+            ) in enumerate(self.data_loader):
+                if self.log_memory:
+                    profiler.log(tag=f"Before batch {batch_idx}")
+                start_time = time.time()
+                print(
+                    f"Start embedding batch {batch_idx + 1} of {len(self.data_loader)}"
+                )
+                toks = toks.to(self.device, non_blocking=True)
+                if attention_mask is not None:
+                    attention_mask = attention_mask.to(self.device, non_blocking=True)
+                pooling_mask = self.mask_special_tokens(
+                    toks, self.special_tokens
+                ).cpu()  # mask special tokens to avoid diluting signal when pooling embeddings
+                try:
+                    logits, representations, attention_matrices = self.compute_outputs(
+                        self.model,
+                        toks,
+                        attention_mask,
+                        self.return_embeddings,
+                        self.return_contacts,
+                        self.return_logits,
                     )
-                    toks = toks.to(self.device, non_blocking=True)
-                    if not attention_mask == None:
-                        attention_mask = attention_mask.to(
-                            self.device, non_blocking=True
-                        )
-                    pooling_mask = self.mask_special_tokens(
-                        toks, self.special_tokens
-                    ).cpu()  # mask special tokens to avoid diluting signal when pooling embeddings
-                    try:
-                        logits, representations, attention_matrices = (
-                            self.compute_outputs(
-                                self.model,
-                                toks,
-                                attention_mask,
-                                self.return_embeddings,
-                                self.return_contacts,
-                                self.return_logits,
-                            )
-                        )
-                    except torch.OutOfMemoryError as e:
-                        print(
-                            f"[GPU memory overflow] {e}. Clearing cache and trying again..."
-                        )
-                        torch.cuda.empty_cache()
-                        logits, representations, attention_matrices = (
-                            self.compute_outputs(
-                                self.model,
-                                toks,
-                                attention_mask,
-                                self.return_embeddings,
-                                self.return_contacts,
-                                self.return_logits,
-                            )
-                        )
-                    torch.cuda.empty_cache()
-
-                    output_bundle = {
-                        "logits": logits,
-                        "attention_matrices": attention_matrices,
-                        "representations": representations,
-                        "batch_labels": labels,
-                        "pooling_mask": pooling_mask,
-                        "cdr3_mask": cdr3_mask,
-                        "offset": offset,
-                        "special_tokens": not self.disable_special_tokens,
-                    }
-                    future = executor.submit(self.extract_batch, output_bundle)
-
-                    del logits, representations, attention_matrices
-                    gc.collect()
-                    torch.cuda.empty_cache()
-
-                    offset += len(toks)
-
-                    # Clean up completed futures that returned None or raised exceptions
-                    new_futures = []
-                    for f in futures:
-                        if f.done():
-                            try:
-                                result = f.result()
-                                if result is not None:
-                                    new_futures.append(f)
-                            except Exception as e:
-                                print(f"[Future Exception] {e}")
-                        else:
-                            new_futures.append(f)
-                    futures = new_futures
-
-                    # Throttle: wait if we're over the max allowed concurrent tasks
-                    while len(futures) >= self.max_in_flight:
-                        done, not_done = wait(futures, return_when=FIRST_COMPLETED)
-                        for f in done:
-                            try:
-                                result = f.result()
-                                if result is not None:
-                                    not_done.add(f)
-                            except Exception as e:
-                                print(f"[Future Exception] {e}")
-                        futures = list(not_done)
-
-                    # Now safe to append new future
-                    futures.append(future)
-
-                    gc.collect()
-
-                    self.sequence_labels.extend(labels)
-
-                    end_time = time.time()
-                    sequences_per_second = len(labels) / (end_time - start_time)
-                    time_remaining = (
-                        len(self.sequences) - offset
-                    ) / sequences_per_second
-
+                except torch.OutOfMemoryError as e:
                     print(
-                        f"Processed {self.model_name}: {len(self.sequence_labels)} out of {len(self.sequences)} sequences ({sequences_per_second:.2f} sequences per second). Estimated time remaining: {time_remaining:.2f} seconds",
+                        f"[GPU memory overflow] {e}. Clearing cache and trying again..."
                     )
-            for future in as_completed(futures):  # wait for all futures to complete
-                future.result()
+                    torch.cuda.empty_cache()
+                    logits, representations, attention_matrices = self.compute_outputs(
+                        self.model,
+                        toks,
+                        attention_mask,
+                        self.return_embeddings,
+                        self.return_contacts,
+                        self.return_logits,
+                    )
+                torch.cuda.empty_cache()
+
+                output_bundle = {
+                    "logits": logits,
+                    "attention_matrices": attention_matrices,
+                    "representations": representations,
+                    "batch_labels": labels,
+                    "pooling_mask": pooling_mask,
+                    "cdr3_mask": cdr3_mask,
+                    "offset": offset,
+                    "special_tokens": not self.disable_special_tokens,
+                }
+                self.extract_batch(output_bundle)
+
+                del logits, representations, attention_matrices
+                gc.collect()
+                torch.cuda.empty_cache()
+
+                offset += len(toks)
+
+                self.sequence_labels.extend(labels)
+
+                end_time = time.time()
+                sequences_per_second = len(labels) / (end_time - start_time)
+                time_remaining = (len(self.sequences) - offset) / sequences_per_second
+                time_remaining_str = str(timedelta(seconds=int(time_remaining)))
+
+                print(
+                    f"Processed {self.model_name}: {len(self.sequence_labels)} out of {len(self.sequences)} sequences ({sequences_per_second:.2f} sequences per second). Estimated time remaining: {time_remaining_str} ",
+                )
+            self.io_dispatcher.stop()
             print("Finished extracting embeddings")
 
     def load_data(self):
@@ -493,8 +458,16 @@ class BaseEmbedder:
         for layer in self.layers:
             tensor = logits[layer - 1]
             if self.batch_writing:
-                output_file = self.logits["output_data"][layer]
-                self.write_batch_to_disk(output_file, tensor, offset)
+                # output_file = self.logits["output_data"][layer]
+                # self.write_batch_to_disk(output_file, tensor, offset)
+
+                self.io_dispatcher.enqueue(
+                    output_type="logits",
+                    layer=layer,
+                    head=None,
+                    offset=offset,
+                    array=tensor.cpu().numpy(),  # Ensure it's on CPU and NumPy
+                )
             else:
                 self.logits["output_data"][layer].extend(tensor)
 
@@ -518,8 +491,15 @@ class BaseEmbedder:
                 ]
             )
             if self.batch_writing:
-                output_file = self.embeddings["output_data"][layer]
-                self.write_batch_to_disk(output_file, tensor, offset)
+                # output_file = self.embeddings["output_data"][layer]
+                # self.write_batch_to_disk(output_file, tensor, offset)
+                self.io_dispatcher.enqueue(
+                    output_type="embeddings",
+                    layer=layer,
+                    head=None,
+                    offset=offset,
+                    array=tensor.cpu().numpy(),  # Ensure it's on CPU and NumPy
+                )
             else:
                 self.embeddings["output_data"][layer].extend(tensor)
 
@@ -535,8 +515,15 @@ class BaseEmbedder:
                     [representations[layer][i] for i in range(len(batch_labels))]
                 )
                 if self.batch_writing:
-                    output_file = self.embeddings_unpooled["output_data"][layer]
-                    self.write_batch_to_disk(output_file, tensor, offset)
+                    # output_file = self.embeddings_unpooled["output_data"][layer]
+                    # self.write_batch_to_disk(output_file, tensor, offset)
+                    self.io_dispatcher.enqueue(
+                        output_type="embeddings_unpooled",
+                        layer=layer,
+                        head=None,
+                        offset=offset,
+                        array=tensor.cpu().numpy(),  # Ensure it's on CPU and NumPy
+                    )
                 else:
                     self.embeddings_unpooled["output_data"][layer].extend(tensor)
         else:  # TODO remove padding tokens
@@ -564,10 +551,17 @@ class BaseEmbedder:
                 if self.flatten:
                     tensor = tensor.flatten(start_dim=1)
                 if self.batch_writing:
-                    output_file = self.attention_matrices_all_heads["output_data"][
-                        layer
-                    ][head]
-                    self.write_batch_to_disk(output_file, tensor, offset)
+                    # output_file = self.attention_matrices_all_heads["output_data"][
+                    #    layer
+                    # ][head]
+                    # self.write_batch_to_disk(output_file, tensor, offset)
+                    self.io_dispatcher.enqueue(
+                        output_type="attention_matrices_all_heads",
+                        layer=layer,
+                        head=head,
+                        offset=offset,
+                        array=tensor.cpu().numpy(),  # Ensure it's on CPU and NumPy
+                    )
                 else:
                     self.attention_matrices_all_heads["output_data"][layer][
                         head
@@ -589,10 +583,17 @@ class BaseEmbedder:
             if self.flatten:
                 tensor = tensor.flatten(start_dim=1)
             if self.batch_writing:
-                output_file = self.attention_matrices_average_layers["output_data"][
-                    layer
-                ]
-                self.write_batch_to_disk(output_file, tensor, offset)
+                # output_file = self.attention_matrices_average_layers["output_data"][
+                #    layer
+                # ]
+                # self.write_batch_to_disk(output_file, tensor, offset)
+                self.io_dispatcher.enqueue(
+                    output_type="attention_matrices_average_layers",
+                    layer=layer,
+                    head=None,
+                    offset=offset,
+                    array=tensor.cpu().numpy(),  # Ensure it's on CPU and NumPy
+                )
             else:
                 self.attention_matrices_average_layers["output_data"][layer].extend(
                     tensor
@@ -613,8 +614,15 @@ class BaseEmbedder:
         if self.flatten:
             tensor = tensor.flatten(start_dim=1)
         if self.batch_writing:
-            output_file = self.attention_matrices_average_all["output_data"]
-            self.write_batch_to_disk(output_file, tensor, offset)
+            # output_file = self.attention_matrices_average_all["output_data"]
+            # self.write_batch_to_disk(output_file, tensor, offset)
+            self.io_dispatcher.enqueue(
+                output_type="attention_matrices_average_all",
+                layer=None,
+                head=None,
+                offset=offset,
+                array=tensor.cpu().numpy(),  # Ensure it's on CPU and NumPy
+            )
         else:
             self.attention_matrices_average_all["output_data"].extend(tensor)
 
@@ -676,16 +684,25 @@ class BaseEmbedder:
         offset,
     ):
         for layer in self.layers:
-            tensor = []
-            for i, mask in enumerate(cdr3_mask):
-                tensor.extend(
-                    (mask.unsqueeze(-1) * representations[layer][i]).sum(0)
-                    / mask.unsqueeze(-1).sum(0)
-                )
-            tensor = torch.stack(tensor)
+            tensor = torch.stack(
+                [
+                    (
+                        (mask.unsqueeze(-1) * representations[layer][i]).sum(0)
+                        / mask.unsqueeze(-1).sum(0)
+                    )
+                    for i, mask in enumerate(cdr3_mask)
+                ]
+            )
             if self.batch_writing:
-                output_file = self.cdr3_extracted["output_data"][layer]
-                self.write_batch_to_disk(output_file, tensor, offset)
+                # output_file = self.cdr3_extracted["output_data"][layer]
+                # self.write_batch_to_disk(output_file, tensor, offset)
+                self.io_dispatcher.enqueue(
+                    output_type="cdr3_extracted",
+                    layer=layer,
+                    head=None,
+                    offset=offset,
+                    array=tensor.cpu().numpy(),  # Ensure it's on CPU and NumPy
+                )
             else:
                 self.cdr3_extracted["output_data"][layer].extend(tensor)
 
@@ -697,7 +714,7 @@ class BaseEmbedder:
             del tensor
             batch_size = tensor_np.shape[0]
             mmapped_array[offset : offset + batch_size, ...] = tensor_np
-            # mmapped_array.flush()
+            mmapped_array.flush()
         except Exception as e:
             print(f"Error while writing batch to disk: {e}")
         finally:
@@ -717,10 +734,10 @@ class BaseEmbedder:
                     output_file_layer = os.path.join(
                         self.output_path,
                         output_type,
-                        f"{output_name}_{self.model_name}_{output_type}_layer_{layer}.pt",
+                        f"{output_name}_{self.model_name}_{output_type}_layer_{layer}.npy",
                     )
                     if "unpooled" not in output_type:
-                        getattr(self, output_type)[layer] = torch.vstack(
+                        getattr(self, output_type)["output_data"][layer] = torch.vstack(
                             getattr(self, output_type)["output_data"][layer]
                         )
                         stacked = True
@@ -734,9 +751,15 @@ class BaseEmbedder:
                             getattr(self, output_type)["output_data"][layer]
                         )
                         stacked = True
-                    torch.save(
-                        (getattr(self, output_type)["output_data"][layer]),
+                    # torch.save(
+                    #    (getattr(self, output_type)["output_data"][layer]),
+                    #    output_file_layer,
+                    # )
+                    np.save(
                         output_file_layer,
+                        getattr(self, output_type)["output_data"][layer]
+                        .numpy()
+                        .astype(np.float16),
                     )
                     print(
                         f"Saved {output_type} representation for layer {layer} to {output_file_layer}"
@@ -745,19 +768,22 @@ class BaseEmbedder:
                 output_file = os.path.join(
                     self.output_path,
                     output_type,
-                    f"{self.output_prefix}_{self.model_name}_{output_type}.pt",
+                    f"{self.output_prefix}_{self.model_name}_{output_type}.npy",
                 )
                 if self.flatten:
-                    torch.save(
-                        torch.stack(
-                            getattr(self, output_type)["output_data"], dim=0
-                        ).flatten(start_dim=1),
+                    np.save(
                         output_file,
+                        torch.stack(getattr(self, output_type)["output_data"], dim=0)
+                        .flatten(start_dim=1)
+                        .numpy()
+                        .astype(np.float16),
                     )
                 else:
-                    torch.save(
-                        torch.stack(getattr(self, output_type)["output_data"], dim=0),
+                    np.save(
                         output_file,
+                        torch.stack(getattr(self, output_type)["output_data"], dim=0)
+                        .numpy()
+                        .astype(np.float16),
                     )
                 print(f"Saved {output_type} representation to {output_file}")
             elif "average_layer" in output_type:
@@ -765,21 +791,26 @@ class BaseEmbedder:
                     output_file = os.path.join(
                         self.output_path,
                         output_type,
-                        f"{self.output_prefix}_{self.model_name}_{output_type}_layer_{layer}.pt",
+                        f"{self.output_prefix}_{self.model_name}_{output_type}_layer_{layer}.npy",
                     )
                     if self.flatten:
-                        torch.save(
+                        np.save(
+                            output_file,
                             torch.stack(
                                 getattr(self, output_type)["output_data"][layer], dim=0
-                            ).flatten(start_dim=1),
-                            output_file,
+                            )
+                            .flatten(start_dim=1)
+                            .numpy()
+                            .astype(np.float16),
                         )
                     else:
-                        torch.save(
+                        np.save(
+                            output_file,
                             torch.stack(
                                 getattr(self, output_type)["output_data"][layer]
-                            ),
-                            output_file,
+                            )
+                            .numpy()
+                            .astype(np.float16),
                         )
                     print(
                         f"Saved {output_type} representation for layer {layer} to {output_file}"
@@ -790,28 +821,33 @@ class BaseEmbedder:
                         output_file = os.path.join(
                             self.output_path,
                             output_type,
-                            f"{self.output_prefix}_{self.model_name}_{output_type}_layer_{layer}_head_{head + 1}.pt",
+                            f"{self.output_prefix}_{self.model_name}_{output_type}_layer_{layer}_head_{head + 1}.npy",
                         )
                         if self.flatten:
-                            torch.save(
+                            np.save(
+                                output_file,
                                 torch.stack(
                                     getattr(self, output_type)["output_data"][layer][
                                         head
                                     ],
                                     dim=0,
-                                ).flatten(start_dim=1),
-                                output_file,
+                                )
+                                .flatten(start_dim=1)
+                                .numpy()
+                                .astype(np.float16),
                             )
                             # delete the tensor from memory
                             # del getattr(self, output_type)
                         else:
-                            torch.save(
+                            np.save(
+                                output_file,
                                 torch.stack(
                                     getattr(self, output_type)["output_data"][layer][
                                         head
                                     ]
-                                ),
-                                output_file,
+                                )
+                                .numpy()
+                                .astype(np.float16),
                             )
                             # delete the tensor from memory
                             # del getattr(self, output_type)
@@ -823,11 +859,13 @@ class BaseEmbedder:
                     output_file = os.path.join(
                         self.output_path,
                         output_type,
-                        f"{self.output_prefix}_{self.model_name}_{output_type}_layer_{layer}.pt",
+                        f"{self.output_prefix}_{self.model_name}_{output_type}_layer_{layer}.npy",
                     )
-                    torch.save(
-                        torch.stack(getattr(self, output_type)["output_data"][layer]),
+                    np.save(
                         output_file,
+                        torch.stack(getattr(self, output_type)["output_data"][layer])
+                        .numpy()
+                        .astype(np.float16),
                     )
                     print(
                         f"Saved {output_type} representation for layer {layer} to {output_file}"
@@ -858,6 +896,28 @@ class BaseEmbedder:
             for output_type in self.output_types:
                 global memmap_file_list
                 memmap_file_list = self.preallocate_disk_space(output_type)
+            # Build centralized memmap registry
+            self.memmap_registry = {}
+
+            for output_type in self.output_types:
+                output_data = getattr(self, output_type)["output_data"]
+
+                for layer in self.layers:
+                    if isinstance(output_data, dict):
+                        if isinstance(output_data[layer], dict):
+                            # Per-head memmaps: output_data[layer][head]
+                            for head in range(self.num_heads):
+                                self.memmap_registry[(output_type, layer, head)] = (
+                                    output_data[layer][head]
+                                )
+                        else:
+                            # Per-layer memmaps: output_data[layer]
+                            self.memmap_registry[(output_type, layer, None)] = (
+                                output_data[layer]
+                            )
+                    else:
+                        # One single output file (e.g., attention_average_all)
+                        self.memmap_registry[(output_type, None, None)] = output_data
             print("Preallocated disk space")
         print("Created output directories")
 

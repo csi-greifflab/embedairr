@@ -8,6 +8,7 @@ import psutil
 import numpy as np
 import tracemalloc
 from transformers import RoFormerTokenizer
+import threading, queue
 
 
 class TokenBudgetBatchSampler:
@@ -70,18 +71,12 @@ class SequenceDictDataset(Dataset):
     def get_subsequence_masks(self):
         """Get the subsequence masks for the CDR3 sequences."""
         # Get the full sequences and CDR3 sequences
-        if torch.cuda.is_available():
-            full_sequence_tokens = [entry[2].cuda() for entry in self.encoded_data]
-            cdr3_sequences_tokens = [
-                entry[2].cuda() for entry in self.encoded_cdr3_data
-            ]
-        else:
-            full_sequence_tokens = [entry[2] for entry in self.encoded_data]
-            cdr3_sequences_tokens = [entry[2] for entry in self.encoded_cdr3_data]
+        full_sequence_tokens = [entry[2] for entry in self.encoded_data]
+        cdr3_sequences_tokens = [entry[2] for entry in self.encoded_cdr3_data]
 
         # Create masks for each sequence
         masks = [
-            self.find_subsequence(full_seq, cdr3_seq, self.pad_token_id).cpu()
+            self.find_subsequence(full_seq, cdr3_seq, self.pad_token_id)
             for full_seq, cdr3_seq in zip(full_sequence_tokens, cdr3_sequences_tokens)
         ]
 
@@ -170,7 +165,7 @@ class HuggingFaceDataset(SequenceDictDataset):
             max_length = max_token_length
         encoded = tokenizer(
             list(strs),
-            truncation=False,
+            truncation=True,
             padding="max_length",
             return_tensors="pt",
             add_special_tokens=add_special_tokens,
@@ -285,14 +280,18 @@ class ESMDataset(SequenceDictDataset):
         return max(len(toks) for _, _, toks in self.encoded_data)
 
     def safe_collate(self, batch):
-        labels, seqs, toks, _, cdr3_masks = zip(*batch)
-        return (
-            list(labels),
-            list(seqs),
-            torch.stack(toks),
-            None,
-            torch.stack(cdr3_masks),
-        )
+        if self.cdr3_dict:
+            labels, seqs, toks, _, cdr3_masks = zip(*batch)
+            return (
+                list(labels),
+                list(seqs),
+                torch.stack(toks),
+                None,
+                torch.stack(cdr3_masks),
+            )
+        else:
+            labels, seqs, toks, _, _ = zip(*batch)
+            return list(labels), list(seqs), torch.stack(toks), None, None
 
     def __getitem__(self, idx):
         labels, seqs, toks = self.encoded_data[idx]
@@ -450,3 +449,96 @@ class MemoryProfiler:
                     *top_lines,
                 ]
             )
+
+
+class IOFlushWorker(threading.Thread):
+    def __init__(
+        self, memmap_registry, flush_bytes_limit=64 * 1024 * 1024
+    ):  # e.g. 64 MB
+        super().__init__()
+        self.memmap_registry = (
+            memmap_registry  # Dict: (output_type, layer, head) → memmap
+        )
+        self.flush_limit = flush_bytes_limit
+        self.write_q = queue.Queue(maxsize=128)
+        self.buffer = {}  # (output_type, layer, head) → list of (offset, array)
+        self.buffered_bytes = {}  # (output_type, layer, head) → total bytes
+        self.total_buffered = 0
+        self.lock = threading.Lock()
+        self.shutdown_flag = threading.Event()
+
+    def run(self):
+        while not self.shutdown_flag.is_set():
+            try:
+                item = self.write_q.get(timeout=1)
+            except queue.Empty:
+                continue
+            if item is None:
+                break
+            key, offset, array = item
+            arr_bytes = array.nbytes
+
+            with self.lock:
+                self.buffer.setdefault(key, []).append((offset, array))
+                self.buffered_bytes[key] = self.buffered_bytes.get(key, 0) + arr_bytes
+                self.total_buffered += arr_bytes
+
+                if self.total_buffered >= self.flush_limit:
+                    self.flush_all()
+
+        # Final flush
+        self.flush_all()
+
+    def flush_all(self):
+        for key in list(self.buffer.keys()):
+            self.flush_key(key)
+        self.total_buffered = 0
+
+    def flush_key(self, key):
+        mmap_handle = self.memmap_registry[key]
+        for offset, arr in self.buffer[key]:
+            mmap_handle[offset : offset + arr.shape[0]] = arr
+        mmap_handle.flush()
+        self.total_buffered -= self.buffered_bytes.get(key, 0)
+        self.buffered_bytes[key] = 0
+        self.buffer[key].clear()
+
+    def enqueue(self, output_type, layer, head, offset, array):
+        key = (output_type, layer, head)
+        self.write_q.put((key, offset, array))
+
+    def stop(self):
+        self.shutdown_flag.set()
+        self.write_q.put(None)
+        self.join()
+
+
+class MultiIODispatcher:
+    def __init__(
+        self, memmap_registry, num_workers=4, flush_bytes_limit=64 * 1024 * 1024
+    ):
+        self.num_workers = num_workers
+        self.workers = []
+
+        # Distribute files across workers by hashing the key
+        sharded_registries = [{} for _ in range(num_workers)]
+        for key, mmap in memmap_registry.items():
+            shard_id = hash(key) % num_workers
+            sharded_registries[shard_id][key] = mmap
+
+        for i in range(num_workers):
+            worker = IOFlushWorker(
+                memmap_registry=sharded_registries[i],
+                flush_bytes_limit=flush_bytes_limit,
+            )
+            worker.start()
+            self.workers.append(worker)
+
+    def enqueue(self, output_type, layer, head, offset, array):
+        key = (output_type, layer, head)
+        shard_id = hash(key) % self.num_workers
+        self.workers[shard_id].enqueue(output_type, layer, head, offset, array)
+
+    def stop(self):
+        for worker in self.workers:
+            worker.stop()
