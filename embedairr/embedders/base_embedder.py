@@ -305,7 +305,7 @@ class BaseEmbedder:
             self.io_dispatcher = MultiIODispatcher(
                 self.memmap_registry,
                 num_workers=self.num_workers,  # Adjust depending on your storage backend
-                flush_bytes_limit=8 * 1024**3,  # Total per thread
+                flush_bytes_limit=128 * 1024**2,  # Total per thread
             )
         with torch.no_grad():
             offset = 0
