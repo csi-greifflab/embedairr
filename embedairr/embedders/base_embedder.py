@@ -305,7 +305,7 @@ class BaseEmbedder:
             self.io_dispatcher = MultiIODispatcher(
                 self.memmap_registry,
                 num_workers=self.num_workers,  # Adjust depending on your storage backend
-                flush_bytes_limit=128 * 1024**2,  # Total per thread
+                flush_bytes_limit=512 * 1024**2,  # Total per thread
             )
         with torch.no_grad():
             offset = 0
@@ -466,7 +466,9 @@ class BaseEmbedder:
                     layer=layer,
                     head=None,
                     offset=offset,
-                    array=tensor.cpu().numpy(),  # Ensure it's on CPU and NumPy
+                    array=np.ascontiguousarray(
+                        tensor.cpu().numpy()
+                    ),  # Ensure it's on CPU and NumPy
                 )
             else:
                 self.logits["output_data"][layer].extend(tensor)
@@ -498,7 +500,9 @@ class BaseEmbedder:
                     layer=layer,
                     head=None,
                     offset=offset,
-                    array=tensor.cpu().numpy(),  # Ensure it's on CPU and NumPy
+                    array=np.ascontiguousarray(
+                        tensor.cpu().numpy()
+                    ),  # Ensure it's on CPU and NumPy
                 )
             else:
                 self.embeddings["output_data"][layer].extend(tensor)
@@ -522,7 +526,9 @@ class BaseEmbedder:
                         layer=layer,
                         head=None,
                         offset=offset,
-                        array=tensor.cpu().numpy(),  # Ensure it's on CPU and NumPy
+                        array=np.ascontiguousarray(
+                            tensor.cpu().numpy()
+                        ),  # Ensure it's on CPU and NumPy
                     )
                 else:
                     self.embeddings_unpooled["output_data"][layer].extend(tensor)
@@ -560,7 +566,9 @@ class BaseEmbedder:
                         layer=layer,
                         head=head,
                         offset=offset,
-                        array=tensor.cpu().numpy(),  # Ensure it's on CPU and NumPy
+                        array=np.ascontiguousarray(
+                            tensor.cpu().numpy()
+                        ),  # Ensure it's on CPU and NumPy
                     )
                 else:
                     self.attention_matrices_all_heads["output_data"][layer][
@@ -592,7 +600,9 @@ class BaseEmbedder:
                     layer=layer,
                     head=None,
                     offset=offset,
-                    array=tensor.cpu().numpy(),  # Ensure it's on CPU and NumPy
+                    array=np.ascontiguousarray(
+                        tensor.cpu().numpy()
+                    ),  # Ensure it's on CPU and NumPy
                 )
             else:
                 self.attention_matrices_average_layers["output_data"][layer].extend(
@@ -621,7 +631,9 @@ class BaseEmbedder:
                 layer=None,
                 head=None,
                 offset=offset,
-                array=tensor.cpu().numpy(),  # Ensure it's on CPU and NumPy
+                array=np.ascontiguousarray(
+                    tensor.cpu().numpy()
+                ),  # Ensure it's on CPU and NumPy
             )
         else:
             self.attention_matrices_average_all["output_data"].extend(tensor)
@@ -701,7 +713,9 @@ class BaseEmbedder:
                     layer=layer,
                     head=None,
                     offset=offset,
-                    array=tensor.cpu().numpy(),  # Ensure it's on CPU and NumPy
+                    array=np.ascontiguousarray(
+                        tensor.cpu().numpy()
+                    ),  # Ensure it's on CPU and NumPy
                 )
             else:
                 self.cdr3_extracted["output_data"][layer].extend(tensor)
