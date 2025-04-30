@@ -111,13 +111,16 @@ class BaseEmbedder:
                 self.output_path, "attention_matrices_all_heads"
             ),
             "shape": (
-                self.num_sequences,
-                self.max_length,
-                self.max_length,
-            ),
-            "shape_flattened": (
-                self.num_sequences,
-                (self.max_length**2),
+                (
+                    self.num_sequences,
+                    self.max_length,
+                    self.max_length,
+                )
+                if not self.flatten
+                else (
+                    self.num_sequences,
+                    self.max_length**2,
+                )
             ),
         }
         self.attention_matrices_average_layers = {
@@ -127,13 +130,16 @@ class BaseEmbedder:
                 self.output_path, "attention_matrices_average_layers"
             ),
             "shape": (
-                self.num_sequences,
-                self.max_length,
-                self.max_length,
-            ),
-            "shape_flattened": (
-                self.num_sequences,
-                (self.max_length**2),
+                (
+                    self.num_sequences,
+                    self.max_length,
+                    self.max_length,
+                )
+                if not self.flatten
+                else (
+                    self.num_sequences,
+                    self.max_length**2,
+                )
             ),
         }
         self.attention_matrices_average_all = {
@@ -143,13 +149,16 @@ class BaseEmbedder:
                 self.output_path, "attention_matrices_average_all"
             ),
             "shape": (
-                self.num_sequences,
-                self.max_length,
-                self.max_length,
-            ),
-            "shape_flattened": (
-                self.num_sequences,
-                (self.max_length**2),
+                (
+                    self.num_sequences,
+                    self.max_length,
+                    self.max_length,
+                )
+                if not self.flatten
+                else (
+                    self.num_sequences,
+                    self.max_length**2,
+                )
             ),
         }
         self.cdr3_attention_matrices_average_layers = {
@@ -160,13 +169,16 @@ class BaseEmbedder:
                 "cdr3_attention_matrices_average_layers",
             ),
             "shape": (
-                self.num_sequences,
-                self.max_length,
-                self.max_length,
-            ),
-            "shape_flattened": (
-                self.num_sequences,
-                (self.max_length**2),
+                (
+                    self.num_sequences,
+                    self.max_length,
+                    self.max_length,
+                )
+                if not self.flatten
+                else (
+                    self.num_sequences,
+                    self.max_length**2,
+                )
             ),
         }
         self.cdr3_attention_matrices_average_all = {
@@ -176,13 +188,16 @@ class BaseEmbedder:
                 self.output_path, "cdr3_attention_matrices_average_all"
             ),
             "shape": (
-                self.num_sequences,
-                self.max_length,
-                self.max_length,
-            ),
-            "shape_flattened": (
-                self.num_sequences,
-                (self.max_length**2),
+                (
+                    self.num_sequences,
+                    self.max_length,
+                    self.max_length,
+                )
+                if not self.flatten
+                else (
+                    self.num_sequences,
+                    self.max_length**2,
+                )
             ),
         }
 
@@ -225,7 +240,7 @@ class BaseEmbedder:
         file_list = []
         np_dtype = np.float16  # TODO make optional
         if "attention" in output_type and "cdr3" not in output_type:
-            shape = getattr(self, output_type)["shape_flattened"]
+            shape = getattr(self, output_type)["shape"]
             if "average_all" in output_type:
                 output_file = os.path.join(
                     getattr(self, output_type)["output_dir"],
