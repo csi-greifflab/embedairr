@@ -9,6 +9,7 @@ import time
 import gc
 from embedairr.utils import MultiIODispatcher, MemoryProfiler
 from datetime import timedelta
+from tqdm.auto import tqdm
 
 
 class BaseEmbedder:
@@ -47,7 +48,7 @@ class BaseEmbedder:
             if "attention" in output_type:
                 self.return_contacts = True
         self.discard_padding = args.discard_padding
-        self.flatten = True
+        self.flatten = args.flatten
         if (args.extract_embeddings[0] == "false") & (
             args.extract_cdr3_embeddings[0] == "false"
         ):
@@ -82,9 +83,16 @@ class BaseEmbedder:
             "method": self.extract_embeddings_unpooled,
             "output_dir": os.path.join(self.output_path, "embeddings_unpooled"),
             "shape": (
-                self.num_sequences,
-                self.max_length,
-                self.embedding_size,
+                (
+                    self.num_sequences,
+                    self.max_length,
+                    self.embedding_size,
+                )
+                if not self.flatten
+                else (
+                    self.num_sequences,
+                    self.max_length * self.embedding_size,
+                )
             ),
         }
         self.cdr3_extracted = {
@@ -307,6 +315,12 @@ class BaseEmbedder:
                 num_workers=self.num_workers,  # Adjust depending on your storage backend
                 flush_bytes_limit=512 * 1024**2,  # Total per thread
             )
+        pbar = tqdm(
+            self.data_loader,
+            total=len(self.data_loader),
+            desc=f"Embedding ({self.model_name})",
+            unit="batch",
+        )
         with torch.no_grad():
             offset = 0
             for batch_idx, (
@@ -315,13 +329,10 @@ class BaseEmbedder:
                 toks,
                 attention_mask,
                 cdr3_mask,
-            ) in enumerate(self.data_loader):
+            ) in enumerate(pbar):
                 if self.log_memory:
                     profiler.log(tag=f"Before batch {batch_idx}")
                 start_time = time.time()
-                print(
-                    f"Start embedding batch {batch_idx + 1} of {len(self.data_loader)}"
-                )
                 toks = toks.to(self.device, non_blocking=True)
                 if attention_mask is not None:
                     attention_mask = attention_mask.to(self.device, non_blocking=True)
@@ -372,15 +383,21 @@ class BaseEmbedder:
 
                 self.sequence_labels.extend(labels)
 
-                end_time = time.time()
-                sequences_per_second = len(labels) / (end_time - start_time)
-                time_remaining = (len(self.sequences) - offset) / sequences_per_second
-                time_remaining_str = str(timedelta(seconds=int(time_remaining)))
-
-                print(
-                    f"Processed {self.model_name}: {len(self.sequence_labels)} out of {len(self.sequences)} sequences ({sequences_per_second:.2f} sequences per second). Estimated time remaining: {time_remaining_str} ",
+                # compute stats
+                elapsed = time.time() - start_time
+                seq_per_sec = len(labels) / elapsed
+                remaining = (len(self.sequences) - offset) / seq_per_sec
+                # update tqdm postfix instead of printing
+                pbar.set_postfix(
+                    {
+                        "total_seq": len(self.sequence_labels),
+                        "seq/s": f"{seq_per_sec:.2f}",
+                        "ETA": str(timedelta(seconds=int(remaining))),
+                    }
                 )
-            self.io_dispatcher.stop()
+            pbar.close()
+            if self.batch_writing:
+                self.io_dispatcher.stop()
             print("Finished extracting embeddings")
 
     def load_data(self):
@@ -518,6 +535,8 @@ class BaseEmbedder:
                 tensor = torch.stack(
                     [representations[layer][i] for i in range(len(batch_labels))]
                 )
+                if self.flatten:
+                    tensor = tensor.flatten(start_dim=1)
                 if self.batch_writing:
                     # output_file = self.embeddings_unpooled["output_data"][layer]
                     # self.write_batch_to_disk(output_file, tensor, offset)
@@ -536,9 +555,17 @@ class BaseEmbedder:
             print("Feature not implemented yet")
             pass
             for layer in self.layers:
-                self.embeddings_unpooled["output_data"][layer].extend(
-                    [representations[layer][i] for i in range(len(batch_labels))]
-                )
+                if self.flatten:
+                    self.embeddings_unpooled["output_data"][layer].extend(
+                        [
+                            representations[layer][i].flatten(start_dim=1)
+                            for i in range(len(batch_labels))
+                        ]
+                    )
+                else:
+                    self.embeddings_unpooled["output_data"][layer].extend(
+                        [representations[layer][i] for i in range(len(batch_labels))]
+                    )
 
     def extract_attention_matrices_all_heads(
         self,
