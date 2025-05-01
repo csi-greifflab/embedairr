@@ -12,7 +12,7 @@ setup(
         "numpy",
         "protobuf",
         "rjieba",
-        "psutil",
+        "alive_progress",
     ],
     entry_points={"console_scripts": ["embedairr = embedairr.__main__:main"]},
 )

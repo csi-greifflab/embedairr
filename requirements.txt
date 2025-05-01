@@ -1,4 +1,4 @@
--e .
+#-e . is used to install the package in editable mode
 torch
 transformers
 fair-esm
@@ -7,3 +7,4 @@ numpy
 protobuf
 rjieba
 psutil
+alive_progress
