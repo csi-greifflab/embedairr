@@ -58,7 +58,7 @@ class BaseEmbedder:
         self.batch_writing = args.batch_writing
         self.num_workers = args.num_workers if self.batch_writing else 1
         self.max_in_flight = self.num_workers * 2
-        self.flush_batches_after = args.flush_batches_after
+        self.flush_batches_after = args.flush_batches_after * 1024**2  # in bytes
         # self.log_memory = args.log_memory # TODO implement memory logging
 
     def set_output_objects(self):
