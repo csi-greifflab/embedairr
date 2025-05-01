@@ -141,7 +141,7 @@ def parse_arguments():
         "--num_workers",
         type=int,
         default=4,
-        help="Number of workers for asynchronous data writing. Only relevant when --batch_writing is enabled. Default is 1.",
+        help="Number of workers for asynchronous data writing. Only relevant when --batch_writing is enabled. Default is 4.",
     )
     parser.add_argument(
         "--disable_special_tokens",
@@ -167,6 +167,12 @@ def parse_arguments():
         choices=[True, False],
         default=True,
         help="Flatten the output tensors. Default is False.",
+    )
+    parser.add_argument(
+        "--flush_batches_after",
+        type=int,
+        default=512,
+        help="Size (in MB) of outputs to accumulate in RAM per worker (--num_workers) before flushing to disk. Default is 512.",
     )
 
     # TODO add experiment name

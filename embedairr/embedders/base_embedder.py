@@ -58,6 +58,7 @@ class BaseEmbedder:
         self.batch_writing = args.batch_writing
         self.num_workers = args.num_workers if self.batch_writing else 1
         self.max_in_flight = self.num_workers * 2
+        self.flush_batches_after = args.flush_batches_after
         # self.log_memory = args.log_memory # TODO implement memory logging
 
     def set_output_objects(self):
@@ -370,7 +371,7 @@ class BaseEmbedder:
             self.io_dispatcher = MultiIODispatcher(
                 self.memmap_registry,
                 num_workers=self.num_workers,  # Adjust depending on your storage backend
-                flush_bytes_limit=512 * 1024**2,  # Total per thread
+                flush_bytes_limit=self.flush_batches_after,  # Total per thread
             )
         with alive_bar(
             len(self.data_loader),
