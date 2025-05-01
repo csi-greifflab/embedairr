@@ -9,7 +9,7 @@ import time
 import gc
 from embedairr.utils import MultiIODispatcher, MemoryProfiler
 from datetime import timedelta
-from tqdm.auto import tqdm
+from alive_progress import alive_bar
 
 
 class BaseEmbedder:
@@ -58,7 +58,7 @@ class BaseEmbedder:
         self.batch_writing = args.batch_writing
         self.num_workers = args.num_workers if self.batch_writing else 1
         self.max_in_flight = self.num_workers * 2
-        self.log_memory = args.log_memory
+        # self.log_memory = args.log_memory # TODO implement memory logging
 
     def set_output_objects(self):
         """Initialize output objects."""
@@ -318,11 +318,53 @@ class BaseEmbedder:
         else:
             return None
 
+    def safe_compute(self, toks, attention_mask):
+        """
+        Try to run compute_outputs; on OOM, empty cache, split in half,
+        recurse on each half, then concatenate.
+        """
+        try:
+            return self.compute_outputs(
+                self.model,
+                toks,
+                attention_mask,
+                self.return_embeddings,
+                self.return_contacts,
+                self.return_logits,
+            )
+        except torch.OutOfMemoryError:
+            print("[GPU memory overflow] Decreasing batch size and retrying...")
+            torch.cuda.empty_cache()
+            B = toks.size(0)
+            if B == 1:
+                # can’t split anymore
+                raise
+            # split into two roughly equal chunks
+            half = B // 2
+            toks_chunks = torch.split(toks, [half, B - half], dim=0)
+            if attention_mask is not None:
+                mask_chunks = torch.split(attention_mask, [half, B - half], dim=0)
+            else:
+                mask_chunks = [None, None]
+
+            outs = [
+                self.safe_compute(tc, mc) for tc, mc in zip(toks_chunks, mask_chunks)
+            ]
+            # outs is list of (logits, reps, attn)
+            logits = (
+                torch.cat([o[0] for o in outs], dim=0) if self.return_logits else None
+            )
+            representations = (
+                torch.cat([o[1] for o in outs], dim=0)
+                if self.return_embeddings
+                else None
+            )
+            attention_matrices = (
+                torch.cat([o[2] for o in outs], dim=0) if self.return_contacts else None
+            )
+            return logits, representations, attention_matrices
+
     def embed(self):
-        # Multithreading to overlap computation and writing
-        # process = psutil.Process()
-        if self.log_memory:
-            profiler = MemoryProfiler(memmap_file_list, "memory_log.csv")
         if self.batch_writing:
             # Start centralized I/O dispatcher
             self.io_dispatcher = MultiIODispatcher(
@@ -330,52 +372,27 @@ class BaseEmbedder:
                 num_workers=self.num_workers,  # Adjust depending on your storage backend
                 flush_bytes_limit=512 * 1024**2,  # Total per thread
             )
-        pbar = tqdm(
-            self.data_loader,
-            total=len(self.data_loader),
-            desc=f"Embedding ({self.model_name})",
-            unit="batch",
-        )
-        with torch.no_grad():
+        with alive_bar(
+            len(self.data_loader),
+            title=f"{self.model_name}: Generating embeddings ...",
+        ) as bar, torch.no_grad():
             offset = 0
-            for batch_idx, (
+            for (
                 labels,
                 strs,
                 toks,
                 attention_mask,
                 cdr3_mask,
-            ) in enumerate(pbar):
-                if self.log_memory:
-                    profiler.log(tag=f"Before batch {batch_idx}")
-                start_time = time.time()
+            ) in self.data_loader:
                 toks = toks.to(self.device, non_blocking=True)
                 if attention_mask is not None:
                     attention_mask = attention_mask.to(self.device, non_blocking=True)
                 pooling_mask = self.mask_special_tokens(
                     toks, self.special_tokens
                 ).cpu()  # mask special tokens to avoid diluting signal when pooling embeddings
-                try:
-                    logits, representations, attention_matrices = self.compute_outputs(
-                        self.model,
-                        toks,
-                        attention_mask,
-                        self.return_embeddings,
-                        self.return_contacts,
-                        self.return_logits,
-                    )
-                except torch.OutOfMemoryError as e:
-                    print(
-                        f"[GPU memory overflow] {e}. Clearing cache and trying again..."
-                    )
-                    torch.cuda.empty_cache()
-                    logits, representations, attention_matrices = self.compute_outputs(
-                        self.model,
-                        toks,
-                        attention_mask,
-                        self.return_embeddings,
-                        self.return_contacts,
-                        self.return_logits,
-                    )
+                logits, representations, attention_matrices = self.safe_compute(
+                    toks, attention_mask
+                )
                 torch.cuda.empty_cache()
 
                 output_bundle = {
@@ -397,20 +414,7 @@ class BaseEmbedder:
                 offset += len(toks)
 
                 self.sequence_labels.extend(labels)
-
-                # compute stats
-                elapsed = time.time() - start_time
-                seq_per_sec = len(labels) / elapsed
-                remaining = (len(self.sequences) - offset) / seq_per_sec
-                # update tqdm postfix instead of printing
-                pbar.set_postfix(
-                    {
-                        "total_seq": len(self.sequence_labels),
-                        "seq/s": f"{seq_per_sec:.2f}",
-                        "ETA": str(timedelta(seconds=int(remaining))),
-                    }
-                )
-            pbar.close()
+                bar()
             if self.batch_writing:
                 self.io_dispatcher.stop()
             print("Finished extracting embeddings")

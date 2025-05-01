@@ -9,6 +9,7 @@ import numpy as np
 import tracemalloc
 from transformers import RoFormerTokenizer
 import threading, queue
+from alive_progress import alive_bar
 
 
 class TokenBudgetBatchSampler:
@@ -163,16 +164,24 @@ class HuggingFaceDataset(SequenceDictDataset):
                 f"max_length {max_length} is less than the length of the longest sequence: {max_token_length}. Setting max_length to {max_token_length}."
             )
             max_length = max_token_length
-        encoded = tokenizer(
-            list(strs),
-            truncation=True,
-            padding="max_length",
-            return_tensors="pt",
-            add_special_tokens=add_special_tokens,
-            max_length=max_length,
-        )
-        toks = encoded["input_ids"]
-        attention_masks = encoded["attention_mask"]
+        loop_input_ids = []
+        loop_attention_mask = []
+        with alive_bar(len(strs), title="Tokenizing sequences...") as bar:
+            for s in strs:
+                out = tokenizer(
+                    s,
+                    truncation=True,
+                    padding="max_length",
+                    max_length=max_length,
+                    add_special_tokens=add_special_tokens,
+                    return_tensors="pt",
+                )
+                loop_input_ids.append(out.input_ids)
+                loop_attention_mask.append(out.attention_mask)
+                bar()
+
+        toks = torch.cat(loop_input_ids, dim=0)
+        attention_masks = torch.cat(loop_attention_mask, dim=0)
         return list(zip(labels, strs, list(toks), list(attention_masks)))
 
     def gap_sequence(self, sequences: Sequence[str]) -> Sequence[str]:
@@ -251,7 +260,13 @@ class ESMDataset(SequenceDictDataset):
         self, data, alphabet, max_length, prepend_bos=True, append_eos=True
     ):
         labels, strs = zip(*data)
-        encoded = [alphabet.encode(seq_str) for seq_str in strs]
+        encoded = []
+        with alive_bar(len(strs), title="Tokenizing sequences...") as bar:
+            for s in strs:
+                seq_encoded = alphabet.encode(s)
+                encoded.append(seq_encoded)
+                bar()
+
         max_encoded_length = max(len(seq_encoded) for seq_encoded in encoded)
         if max_length == "max_length":
             max_length = max_encoded_length
@@ -303,18 +318,19 @@ class ESMDataset(SequenceDictDataset):
 
 
 def check_input_tokens(valid_tokens, sequences, model_name):
-    print("Checking input sequences for invalid tokens...")
-    for i, (label, sequence) in enumerate(sequences.items()):
-        if "esm" not in model_name:
-            sequence = re.findall(r"\[.*?\]|.", sequence)
-        else:
-            sequence = re.findall(r"<.*?>|.", sequence)
-        if not set(sequence).issubset(valid_tokens):
-            raise ValueError(
-                f"Invalid tokens in sequence {label}. Please check the alphabet used by the model."
-            )
-        # print(f"Processed {i + 1} out of {len(sequences)} sequences", end="\r")
-
+    with alive_bar(
+        len(sequences), title="Checking input sequences for invalid tokens..."
+    ) as bar:
+        for label, sequence in sequences.items():
+            if "esm" not in model_name:
+                sequence = re.findall(r"\[.*?\]|.", sequence)
+            else:
+                sequence = re.findall(r"<.*?>|.", sequence)
+            if not set(sequence).issubset(valid_tokens):
+                raise ValueError(
+                    f"Invalid tokens found in sequence {label}: {set(sequence) - set(valid_tokens)}"
+                )
+            bar()
     print("\nNo invalid tokens in input sequences.")
 
 

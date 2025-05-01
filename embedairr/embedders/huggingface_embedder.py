@@ -38,7 +38,6 @@ class HuggingfaceEmbedder(BaseEmbedder):
     def load_data(self, sequences, cdr3_dict):
         """Tokenize sequences and create a DataLoader."""
         # Tokenize sequences
-        print("Tokenizing sequences...")
         dataset = embedairr.utils.HuggingFaceDataset(
             sequences,
             cdr3_dict,

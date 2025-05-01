@@ -94,7 +94,6 @@ class ESMEmbedder(BaseEmbedder):
 
     def load_data(self, sequences, cdr3_dict=None):
         # Creating a dataset from the input fasta file
-        print("Tokenizing sequences...")
         dataset = embedairr.utils.ESMDataset(
             sequences,
             cdr3_dict,
@@ -146,7 +145,7 @@ class ESMEmbedder(BaseEmbedder):
         else:
             attention_matrices = None
         # Extracting layer representations and moving them to CPU
-        if self.return_embeddings:
+        if return_embeddings:
             representations = {
                 layer: t.to(dtype=torch.float16).cpu()
                 for layer, t in outputs["representations"].items()
