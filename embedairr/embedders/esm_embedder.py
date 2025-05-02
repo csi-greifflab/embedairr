@@ -3,8 +3,6 @@ from esm import pretrained
 from embedairr.embedders.base_embedder import BaseEmbedder
 import embedairr.utils
 
-# torch.set_default_dtype(torch.float16)
-
 
 class ESMEmbedder(BaseEmbedder):
     def __init__(self, args):
@@ -19,19 +17,19 @@ class ESMEmbedder(BaseEmbedder):
             self.embedding_size,
             self.prepend_bos,
             self.append_eos,
-        ) = self.initialize_model(self.model_name)
+        ) = self._initialize_model(self.model_name)
         self.valid_tokens = set(self.alphabet.all_toks)
         embedairr.utils.check_input_tokens(
             self.valid_tokens, self.sequences, self.model_name
         )
         self.special_tokens = self.get_special_tokens()
-        self.layers = self.load_layers(self.layers)
-        self.data_loader, self.max_length = self.load_data(
+        self.layers = self._load_layers(self.layers)
+        self.data_loader, self.max_length = self._load_data(
             self.sequences, self.cdr3_dict
         )  # tokenize and batch sequences and update max_length
-        self.set_output_objects()
+        self._set_output_objects()
 
-    def initialize_model(self, model_name):
+    def _initialize_model(self, model_name):
         """Initialize the model, tokenizer"""
         #  Loading the pretrained model and alphabet for tokenization
         print("Loading model...")
@@ -78,7 +76,7 @@ class ESMEmbedder(BaseEmbedder):
         )
         return special_token_ids
 
-    def load_layers(self, layers):
+    def _load_layers(self, layers):
         if not layers:
             layers = list(range(1, self.model.num_layers + 1))
             return layers
@@ -92,7 +90,7 @@ class ESMEmbedder(BaseEmbedder):
         ]
         return layers
 
-    def load_data(self, sequences, cdr3_dict=None):
+    def _load_data(self, sequences, cdr3_dict=None):
         # Creating a dataset from the input fasta file
         dataset = embedairr.utils.ESMDataset(
             sequences,
@@ -131,7 +129,12 @@ class ESMEmbedder(BaseEmbedder):
         )
         if return_logits:
             logits = (
-                outputs["logits"].to(dtype=torch.float16, device="cpu").permute(2, 0, 1)
+                outputs["logits"]
+                .to(
+                    dtype=self._precision_to_dtype(self.precision, "torch"),
+                    device="cpu",
+                )
+                .permute(2, 0, 1)
             )  # permute to match the shape of the representations
             torch.cuda.empty_cache()
         else:
@@ -139,7 +142,9 @@ class ESMEmbedder(BaseEmbedder):
 
         if return_contacts:
             attention_matrices = (
-                outputs["attentions"].to(dtype=torch.float16).permute(1, 0, 2, 3, 4)
+                outputs["attentions"]
+                .to(dtype=self._precision_to_dtype(self.precision, "torch"))
+                .permute(1, 0, 2, 3, 4)
             ).cpu()  # permute to match the shape of the representations
             torch.cuda.empty_cache()
         else:
@@ -147,7 +152,9 @@ class ESMEmbedder(BaseEmbedder):
         # Extracting layer representations and moving them to CPU
         if return_embeddings:
             representations = {
-                layer: t.to(dtype=torch.float16).cpu()
+                layer: t.to(
+                    dtype=self._precision_to_dtype(self.precision, "torch")
+                ).cpu()
                 for layer, t in outputs["representations"].items()
             }
             torch.cuda.empty_cache()

@@ -17,7 +17,7 @@ class HuggingfaceEmbedder(BaseEmbedder):
             self.return_logits = False
             self.output_types.remove("logits")
 
-    def load_layers(self, layers):
+    def _load_layers(self, layers):
         """Check if the specified representation layers are valid."""
         if not layers:
             layers = list(range(1, self.model.config.num_hidden_layers + 1))
@@ -35,7 +35,7 @@ class HuggingfaceEmbedder(BaseEmbedder):
         ]
         return layers
 
-    def load_data(self, sequences, cdr3_dict):
+    def _load_data(self, sequences, cdr3_dict):
         """Tokenize sequences and create a DataLoader."""
         # Tokenize sequences
         dataset = embedairr.utils.HuggingFaceDataset(
@@ -58,7 +58,7 @@ class HuggingfaceEmbedder(BaseEmbedder):
 
         return data_loader, max_length
 
-    def compute_outputs(
+    def _compute_outputs(
         self,
         model,
         toks,
@@ -75,7 +75,7 @@ class HuggingfaceEmbedder(BaseEmbedder):
         )
         if return_contacts:
             attention_matrices = torch.stack(outputs.attentions).to(
-                device="cpu", dtype=torch.float16
+                device="cpu", dtype=self._precision_to_dtype(self.precision, "torch")
             )  # stack attention matrices across layers
             torch.cuda.empty_cache()
         else:
@@ -83,7 +83,8 @@ class HuggingfaceEmbedder(BaseEmbedder):
         if return_embeddings:
             representations = {
                 layer: outputs.hidden_states[layer].to(
-                    device="cpu", dtype=torch.float16
+                    device="cpu",
+                    dtype=self._precision_to_dtype(self.precision, "torch"),
                 )
                 for layer in self.layers
             }
@@ -105,7 +106,7 @@ class Antiberta2Embedder(HuggingfaceEmbedder):
             self.num_heads,
             self.num_layers,
             self.embedding_size,
-        ) = self.initialize_model(self.model_link)
+        ) = self._initialize_model(self.model_link)
         self.valid_tokens = set(self.tokenizer.get_vocab().keys())
         embedairr.utils.check_input_tokens(
             self.valid_tokens, self.sequences, self.model_name
@@ -113,13 +114,13 @@ class Antiberta2Embedder(HuggingfaceEmbedder):
         self.special_tokens = torch.tensor(
             self.tokenizer.all_special_ids, device=self.device, dtype=torch.int8
         )
-        self.layers = self.load_layers(self.layers)
-        self.data_loader, self.max_length = self.load_data(
+        self.layers = self._load_layers(self.layers)
+        self.data_loader, self.max_length = self._load_data(
             self.sequences, self.cdr3_dict
         )
-        self.set_output_objects()
+        self._set_output_objects()
 
-    def initialize_model(self, model_link="alchemab/antiberta2-cssp"):
+    def _initialize_model(self, model_link="alchemab/antiberta2-cssp"):
         """Initialize the model, tokenizer, and device."""
         if torch.cuda.is_available():
             device = torch.device("cuda")
@@ -147,7 +148,7 @@ class T5Embedder(HuggingfaceEmbedder):
             self.num_heads,
             self.num_layers,
             self.embedding_size,
-        ) = self.initialize_model(self.model_link)
+        ) = self._initialize_model(self.model_link)
         self.valid_tokens = self.get_valid_tokens()
         embedairr.utils.check_input_tokens(
             self.valid_tokens, self.sequences, self.model_name
@@ -155,11 +156,11 @@ class T5Embedder(HuggingfaceEmbedder):
         self.special_tokens = torch.tensor(
             self.tokenizer.all_special_ids, device=self.device, dtype=torch.int8
         )
-        self.layers = self.load_layers(self.layers)
-        self.data_loader, self.max_length = self.load_data(
+        self.layers = self._load_layers(self.layers)
+        self.data_loader, self.max_length = self._load_data(
             self.sequences, self.cdr3_dict
         )
-        self.set_output_objects()
+        self._set_output_objects()
 
     def get_valid_tokens(self):
         valid_tokens = set(
@@ -168,7 +169,7 @@ class T5Embedder(HuggingfaceEmbedder):
         )
         return valid_tokens
 
-    def initialize_model(self, model_link="Rostlab/prot_t5_xl_half_uniref50-enc"):
+    def _initialize_model(self, model_link="Rostlab/prot_t5_xl_half_uniref50-enc"):
         """Initialize the model, tokenizer, and device."""
 
         if torch.cuda.is_available():

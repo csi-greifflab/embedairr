@@ -5,10 +5,8 @@ import re
 import numpy as np
 from numpy.lib.format import open_memmap
 import inspect
-import time
 import gc
-from embedairr.utils import MultiIODispatcher, MemoryProfiler
-from datetime import timedelta
+from embedairr.utils import MultiIODispatcher
 from alive_progress import alive_bar
 
 
@@ -34,7 +32,7 @@ class BaseEmbedder:
         self.layers = (
             [j for i in args.layers for j in i] if args.layers != [None] else None
         )
-        self.cdr3_dict = self.load_cdr3(args.cdr3_path) if args.cdr3_path else None
+        self.cdr3_dict = self._load_cdr3(args.cdr3_path) if args.cdr3_path else None
         self.batch_size = args.batch_size
         self.max_length = args.max_length
         if torch.cuda.is_available():
@@ -42,7 +40,7 @@ class BaseEmbedder:
         else:
             self.device = torch.device("cpu")
         self.return_logits = args.extract_logits
-        self.output_types = self.get_output_types(args)
+        self.output_types = self._get_output_types(args)
         self.return_contacts = False
         for output_type in self.output_types:
             if "attention" in output_type:
@@ -80,12 +78,12 @@ class BaseEmbedder:
                 f"Unsupported precision: {precision}. Supported values are {half_precision} or {full_precision}."
             )
 
-    def set_output_objects(self):
+    def _set_output_objects(self):
         """Initialize output objects."""
         self.sequence_labels = []
         self.logits = {
             "output_data": {layer: [] for layer in self.layers},
-            "method": self.extract_logits,
+            "method": self._extract_logits,
             "output_dir": os.path.join(self.output_path, "logits"),
             "shape": (
                 self.num_sequences,
@@ -94,13 +92,13 @@ class BaseEmbedder:
         }
         self.embeddings = {
             "output_data": {layer: [] for layer in self.layers},
-            "method": self.extract_embeddings,
+            "method": self._extract_embeddings,
             "output_dir": os.path.join(self.output_path, "embeddings"),
             "shape": (self.num_sequences, self.embedding_size),
         }
         self.embeddings_unpooled = {
             "output_data": {layer: [] for layer in self.layers},
-            "method": self.extract_embeddings_unpooled,
+            "method": self._extract_embeddings_unpooled,
             "output_dir": os.path.join(self.output_path, "embeddings_unpooled"),
             "shape": (
                 (
@@ -117,7 +115,7 @@ class BaseEmbedder:
         }
         self.cdr3_extracted = {
             "output_data": {layer: [] for layer in self.layers},
-            "method": self.extract_cdr3,
+            "method": self._extract_cdr3,
             "output_dir": os.path.join(self.output_path, "cdr3_extracted"),
             "shape": (self.num_sequences, self.embedding_size),
         }
@@ -126,7 +124,7 @@ class BaseEmbedder:
                 layer: {head: [] for head in range(self.num_heads)}
                 for layer in self.layers
             },
-            "method": self.extract_attention_matrices_all_heads,
+            "method": self._extract_attention_matrices_all_heads,
             "output_dir": os.path.join(
                 self.output_path, "attention_matrices_all_heads"
             ),
@@ -145,7 +143,7 @@ class BaseEmbedder:
         }
         self.attention_matrices_average_layers = {
             "output_data": {layer: [] for layer in self.layers},
-            "method": self.extract_attention_matrices_average_layer,
+            "method": self._extract_attention_matrices_average_layer,
             "output_dir": os.path.join(
                 self.output_path, "attention_matrices_average_layers"
             ),
@@ -164,7 +162,7 @@ class BaseEmbedder:
         }
         self.attention_matrices_average_all = {
             "output_data": [],
-            "method": self.extract_attention_matrices_average_all,
+            "method": self._extract_attention_matrices_average_all,
             "output_dir": os.path.join(
                 self.output_path, "attention_matrices_average_all"
             ),
@@ -183,7 +181,7 @@ class BaseEmbedder:
         }
         self.cdr3_attention_matrices_average_layers = {
             "output_data": {layer: [] for layer in self.layers},
-            "method": self.extract_cdr3_attention_matrices_average_layer,
+            "method": self._extract_cdr3_attention_matrices_average_layer,
             "output_dir": os.path.join(
                 self.output_path,
                 "cdr3_attention_matrices_average_layers",
@@ -203,7 +201,7 @@ class BaseEmbedder:
         }
         self.cdr3_attention_matrices_average_all = {
             "output_data": [],
-            "method": self.extract_cdr3_attention_matrices_average_all,
+            "method": self._extract_cdr3_attention_matrices_average_all,
             "output_dir": os.path.join(
                 self.output_path, "cdr3_attention_matrices_average_all"
             ),
@@ -222,7 +220,7 @@ class BaseEmbedder:
         }
 
     # When changes made here, also update base_embedder.py BaseEmbedder.set_output_objects() method.
-    def get_output_types(self, args):
+    def _get_output_types(self, args):
         output_types = []
 
         options_mapping = {
@@ -264,7 +262,7 @@ class BaseEmbedder:
             base += f"_head_{head + 1}"
         return os.path.join(output_dir, base + ".npy")
 
-    def preallocate_disk_space_all(self):
+    def preallocate_disk_space(self):
         memmap_registry = {}
         for output_type in self.output_types:
             output_data = getattr(self, output_type)["output_data"]
@@ -306,7 +304,7 @@ class BaseEmbedder:
             print(f"Preallocated disk space for {output_type}")
         return memmap_registry
 
-    def load_cdr3(self, cdr3_path):
+    def _load_cdr3(self, cdr3_path):
         """Load CDR3 sequences and store in a dictionary."""
         if cdr3_path:
             with open(cdr3_path) as f:
@@ -317,7 +315,7 @@ class BaseEmbedder:
         else:
             return None
 
-    def safe_compute(self, toks, attention_mask):
+    def _safe_compute(self, toks, attention_mask):
         """
         Try to run compute_outputs; on OOM, empty cache, split in half,
         recurse on each half, then concatenate.
@@ -348,7 +346,7 @@ class BaseEmbedder:
                 mask_chunks = [None, None]
 
             outs = [
-                self.safe_compute(tc, mc) for tc, mc in zip(toks_chunks, mask_chunks)
+                self._safe_compute(tc, mc) for tc, mc in zip(toks_chunks, mask_chunks)
             ]
             # outs is list of (logits, reps, attn)
             logits = (
@@ -390,7 +388,7 @@ class BaseEmbedder:
                 pooling_mask = self.mask_special_tokens(
                     toks, self.special_tokens
                 ).cpu()  # mask special tokens to avoid diluting signal when pooling embeddings
-                logits, representations, attention_matrices = self.safe_compute(
+                logits, representations, attention_matrices = self._safe_compute(
                     toks, attention_mask
                 )
                 torch.cuda.empty_cache()
@@ -419,17 +417,17 @@ class BaseEmbedder:
                 self.io_dispatcher.stop()
             print("Finished extracting embeddings")
 
-    def load_data(self):
+    def _load_data(self):
         raise NotImplementedError(
             "This method should be implemented in the child class"
         )
 
-    def initialize_model(self):
+    def _initialize_model(self):
         raise NotImplementedError(
             "This method should be implemented in the child class"
         )
 
-    def load_layers(self):
+    def _load_layers(self):
         raise NotImplementedError(
             "This method should be implemented in the child class"
         )
@@ -486,7 +484,7 @@ class BaseEmbedder:
         # Convert and return the boolean mask to boolean type.
         return mask
 
-    def extract_logits(
+    def _extract_logits(
         self,
         logits,
         offset,
@@ -509,7 +507,7 @@ class BaseEmbedder:
             else:
                 self.logits["output_data"][layer].extend(tensor)
 
-    def extract_embeddings(
+    def _extract_embeddings(
         self,
         representations,
         batch_labels,
@@ -543,7 +541,7 @@ class BaseEmbedder:
             else:
                 self.embeddings["output_data"][layer].extend(tensor)
 
-    def extract_embeddings_unpooled(
+    def _extract_embeddings_unpooled(
         self,
         representations,
         batch_labels,
@@ -586,7 +584,7 @@ class BaseEmbedder:
                         [representations[layer][i] for i in range(len(batch_labels))]
                     )
 
-    def extract_attention_matrices_all_heads(
+    def _extract_attention_matrices_all_heads(
         self,
         attention_matrices,
         batch_labels,
@@ -621,7 +619,7 @@ class BaseEmbedder:
                         head
                     ].extend(tensor)
 
-    def extract_attention_matrices_average_layer(
+    def _extract_attention_matrices_average_layer(
         self,
         attention_matrices,
         batch_labels,
@@ -655,7 +653,7 @@ class BaseEmbedder:
                     tensor
                 )
 
-    def extract_attention_matrices_average_all(
+    def _extract_attention_matrices_average_all(
         self,
         attention_matrices,
         batch_labels,
@@ -704,7 +702,7 @@ class BaseEmbedder:
                     head
                 ].extend(tensor)
 
-    def extract_cdr3_attention_matrices_average_layer(
+    def _extract_cdr3_attention_matrices_average_layer(
         self,
         attention_matrices,
         batch_labels,
@@ -721,7 +719,7 @@ class BaseEmbedder:
                 tensor
             )
 
-    def extract_cdr3_attention_matrices_average_all(
+    def _extract_cdr3_attention_matrices_average_all(
         self,
         attention_matrices,
         batch_labels,
@@ -735,7 +733,7 @@ class BaseEmbedder:
         tensor = torch.stack(tensor)
         self.cdr3_attention_matrices_average_all["output_data"].extend(tensor)
 
-    def extract_cdr3(
+    def _extract_cdr3(
         self,
         representations,
         cdr3_mask,
@@ -849,31 +847,7 @@ class BaseEmbedder:
         self._create_output_dirs()
         if self.batch_writing:
             print("Preallocating disk space...")
-            for output_type in self.output_types:
-                global memmap_file_list
-                memmap_file_list = self.preallocate_disk_space(output_type)
-            # Build centralized memmap registry
-            self.memmap_registry = {}
-
-            for output_type in self.output_types:
-                output_data = getattr(self, output_type)["output_data"]
-
-                for layer in self.layers:
-                    if isinstance(output_data, dict):
-                        if isinstance(output_data[layer], dict):
-                            # Per-head memmaps: output_data[layer][head]
-                            for head in range(self.num_heads):
-                                self.memmap_registry[(output_type, layer, head)] = (
-                                    output_data[layer][head]
-                                )
-                        else:
-                            # Per-layer memmaps: output_data[layer]
-                            self.memmap_registry[(output_type, layer, None)] = (
-                                output_data[layer]
-                            )
-                    else:
-                        # One single output file (e.g., attention_average_all)
-                        self.memmap_registry[(output_type, None, None)] = output_data
+            self.memmap_registry = self.preallocate_disk_space()
             print("Preallocated disk space")
         print("Created output directories")
 
