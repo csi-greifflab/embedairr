@@ -74,18 +74,21 @@ class HuggingfaceEmbedder(BaseEmbedder):
             output_attentions=return_contacts,
         )
         if return_contacts:
-            attention_matrices = torch.stack(outputs.attentions).to(
-                device="cpu", dtype=self._precision_to_dtype(self.precision, "torch")
+            attention_matrices = (
+                torch.stack(outputs.attentions)
+                .to(self._precision_to_dtype(self.precision, "torch"))
+                .cpu()
             )  # stack attention matrices across layers
             torch.cuda.empty_cache()
         else:
             attention_matrices = None
         if return_embeddings:
             representations = {
-                layer: outputs.hidden_states[layer].to(
-                    device="cpu",
-                    dtype=self._precision_to_dtype(self.precision, "torch"),
+                layer: outputs.hidden_states[layer]
+                .to(
+                    self._precision_to_dtype(self.precision, "torch"),
                 )
+                .cpu()
                 for layer in self.layers
             }
             torch.cuda.empty_cache()

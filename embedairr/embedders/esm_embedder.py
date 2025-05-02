@@ -130,11 +130,9 @@ class ESMEmbedder(BaseEmbedder):
         if return_logits:
             logits = (
                 outputs["logits"]
-                .to(
-                    dtype=self._precision_to_dtype(self.precision, "torch"),
-                    device="cpu",
-                )
+                .to(dtype=self._precision_to_dtype(self.precision, "torch"))
                 .permute(2, 0, 1)
+                .cpu()
             )  # permute to match the shape of the representations
             torch.cuda.empty_cache()
         else:

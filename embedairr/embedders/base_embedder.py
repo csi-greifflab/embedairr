@@ -385,7 +385,7 @@ class BaseEmbedder:
                 toks = toks.to(self.device, non_blocking=True)
                 if attention_mask is not None:
                     attention_mask = attention_mask.to(self.device, non_blocking=True)
-                pooling_mask = self.mask_special_tokens(
+                pooling_mask = self._mask_special_tokens(
                     toks, self.special_tokens
                 ).cpu()  # mask special tokens to avoid diluting signal when pooling embeddings
                 logits, representations, attention_matrices = self._safe_compute(
@@ -403,7 +403,7 @@ class BaseEmbedder:
                     "offset": offset,
                     "special_tokens": not self.disable_special_tokens,
                 }
-                self.extract_batch(output_bundle)
+                self._extract_batch(output_bundle)
 
                 del logits, representations, attention_matrices
                 gc.collect()
@@ -454,7 +454,7 @@ class BaseEmbedder:
 
         return start, end
 
-    def extract_batch(
+    def _extract_batch(
         self,
         output_bundle,
     ):
@@ -469,7 +469,7 @@ class BaseEmbedder:
         del output_bundle
         torch.cuda.empty_cache()
 
-    def mask_special_tokens(self, input_tensor, special_tokens=None):
+    def _mask_special_tokens(self, input_tensor, special_tokens=None):
         """
         Create a boolean mask for special tokens in the input tensor.
 
@@ -500,9 +500,7 @@ class BaseEmbedder:
                     layer=layer,
                     head=None,
                     offset=offset,
-                    array=np.ascontiguousarray(
-                        tensor.cpu().numpy()
-                    ),  # Ensure it's on CPU and NumPy
+                    array=self._to_numpy(tensor),  # Ensure it's on CPU and NumPy
                 )
             else:
                 self.logits["output_data"][layer].extend(tensor)
@@ -534,9 +532,7 @@ class BaseEmbedder:
                     layer=layer,
                     head=None,
                     offset=offset,
-                    array=np.ascontiguousarray(
-                        tensor.cpu().numpy()
-                    ),  # Ensure it's on CPU and NumPy
+                    array=self._to_numpy(tensor),  # Ensure it's on CPU and NumPy
                 )
             else:
                 self.embeddings["output_data"][layer].extend(tensor)
@@ -644,9 +640,7 @@ class BaseEmbedder:
                     layer=layer,
                     head=None,
                     offset=offset,
-                    array=np.ascontiguousarray(
-                        tensor.cpu().numpy()
-                    ),  # Ensure it's on CPU and NumPy
+                    array=self._to_numpy(tensor),  # Ensure it's on CPU and NumPy
                 )
             else:
                 self.attention_matrices_average_layers["output_data"][layer].extend(
@@ -757,9 +751,7 @@ class BaseEmbedder:
                     layer=layer,
                     head=None,
                     offset=offset,
-                    array=np.ascontiguousarray(
-                        tensor.cpu().numpy()
-                    ),  # Ensure it's on CPU and NumPy
+                    array=self._to_numpy(tensor),  # Ensure it's on CPU and NumPy
                 )
             else:
                 self.cdr3_extracted["output_data"][layer].extend(tensor)
@@ -768,7 +760,10 @@ class BaseEmbedder:
         tensor = torch.stack(data_list, dim=0)
         if flatten:
             tensor = tensor.flatten(start_dim=1)
-        return tensor.numpy().astype(self._precision_to_dtype(self.precision, "numpy"))
+        return tensor.numpy()
+
+    def _to_numpy(self, t: torch.Tensor) -> np.ndarray:
+        return t.detach().cpu().contiguous().numpy()
 
     def export_to_disk(self):
         for output_type in self.output_types:
