@@ -59,7 +59,26 @@ class BaseEmbedder:
         self.num_workers = args.num_workers if self.batch_writing else 1
         self.max_in_flight = self.num_workers * 2
         self.flush_batches_after = args.flush_batches_after * 1024**2  # in bytes
+        self.precision = args.precision
         # self.log_memory = args.log_memory # TODO implement memory logging
+
+    def _precision_to_dtype(self, precision, framework):
+        half_precision = ["float16", "16", "half"]
+        full_precision = ["float32", "32", "full"]
+        if precision in half_precision:
+            if framework == "torch":
+                return torch.float16
+            elif framework == "numpy":
+                return np.float16
+        elif precision in full_precision:
+            if framework == "torch":
+                return torch.float32
+            elif framework == "numpy":
+                return np.float32
+        else:
+            raise ValueError(
+                f"Unsupported precision: {precision}. Supported values are {half_precision} or {full_precision}."
+            )
 
     def set_output_objects(self):
         """Initialize output objects."""
@@ -237,76 +256,55 @@ class BaseEmbedder:
 
         return output_types
 
-    def preallocate_disk_space(self, output_type):
-        file_list = []
-        np_dtype = np.float16  # TODO make optional
-        if "attention" in output_type and "cdr3" not in output_type:
+    def _make_output_filepath(self, output_type, output_dir, layer=None, head=None):
+        base = f"{self.output_prefix}_{self.model_name}_{output_type}"
+        if layer is not None:
+            base += f"_layer_{layer}"
+        if head is not None:
+            base += f"_head_{head + 1}"
+        return os.path.join(output_dir, base + ".npy")
+
+    def preallocate_disk_space_all(self):
+        memmap_registry = {}
+        for output_type in self.output_types:
+            output_data = getattr(self, output_type)["output_data"]
             shape = getattr(self, output_type)["shape"]
-            if "average_all" in output_type:
-                output_file = os.path.join(
-                    getattr(self, output_type)["output_dir"],
-                    f"{self.output_prefix}_{self.model_name}_{output_type}.npy",
-                )
-                file_list.append(output_file)
-                # Save it to disk
-                getattr(self, output_type)["output_data"] = open_memmap(
-                    output_file, mode="w+", dtype=np_dtype, shape=shape
-                )
-            elif "average_layer" in output_type:
+            output_dir = getattr(self, output_type)["output_dir"]
+            np_dtype = self._precision_to_dtype(
+                self.precision, "numpy"
+            )  # TODO: make configurable
+
+            if isinstance(output_data, dict):
                 for layer in self.layers:
-                    output_file = os.path.join(
-                        getattr(self, output_type)["output_dir"],
-                        f"{self.output_prefix}_{self.model_name}_{output_type}_layer_{layer}.npy",
-                    )
-                    file_list.append(output_file)
-                    # Save it to disk
-                    getattr(self, output_type)["output_data"][layer] = open_memmap(
-                        output_file, mode="w+", dtype=np_dtype, shape=shape
-                    )
-            elif "all_heads" in output_type:
-                for layer in self.layers:
-                    for head in range(self.num_heads):
-                        output_file = os.path.join(
-                            getattr(self, output_type)["output_dir"],
-                            f"{self.output_prefix}_{self.model_name}_{output_type}_layer_{layer}_head_{head + 1}.npy",
-                        )
-                        file_list.append(output_file)
-                        # Save it to disk
-                        getattr(self, output_type)["output_data"][layer][head] = (
-                            open_memmap(
-                                output_file, mode="w+", dtype=np_dtype, shape=shape
+                    if isinstance(output_data[layer], dict):  # e.g., all_heads
+                        for head in range(self.num_heads):
+                            file_path = self._make_output_filepath(
+                                output_type, output_dir, layer, head
                             )
+                            output_data[layer][head] = open_memmap(
+                                file_path, mode="w+", dtype=np_dtype, shape=shape
+                            )
+                            memmap_registry[(output_type, layer, head)] = output_data[
+                                layer
+                            ][head]
+                    else:
+                        file_path = self._make_output_filepath(
+                            output_type, output_dir, layer
                         )
-        elif "embeddings" in output_type or "cdr3_extracted" in output_type:
-            shape = getattr(self, output_type)["shape"]
-            for layer in self.layers:
-                output_file = os.path.join(
-                    getattr(self, output_type)["output_dir"],
-                    f"{self.output_prefix}_{self.model_name}_{output_type}_layer_{layer}.npy",
+                        output_data[layer] = open_memmap(
+                            file_path, mode="w+", dtype=np_dtype, shape=shape
+                        )
+                        memmap_registry[(output_type, layer, None)] = output_data[layer]
+            else:
+                file_path = self._make_output_filepath(output_type, output_dir)
+                output_array = open_memmap(
+                    file_path, mode="w+", dtype=np_dtype, shape=shape
                 )
-                file_list.append(output_file)
-                # Save it to disk
-                getattr(self, output_type)["output_data"][layer] = open_memmap(
-                    output_file, mode="w+", dtype=np_dtype, shape=shape
-                )
-        elif "logits" in output_type:
-            shape = getattr(self, output_type)["shape"]
-            for layer in self.layers:
-                output_file = os.path.join(
-                    getattr(self, output_type)["output_dir"],
-                    f"{self.output_prefix}_{self.model_name}_{output_type}_layer_{layer}.npy",
-                )
-                file_list.append(output_file)
-                # Save it to disk
-                getattr(self, output_type)["output_data"][layer] = open_memmap(
-                    output_file, mode="w+", dtype=np_dtype, shape=shape
-                )
-        else:
-            raise ValueError(
-                f"Output type {output_type} not recognized. Please choose from: 'embeddings', 'embeddings_unpooled', 'attention_matrices_all_heads', 'attention_matrices_average_layers', 'attention_matrices_average_all', 'cdr3_extracted'"
-            )
-        print(f"Preallocated disk space for {output_type}")
-        return file_list
+                setattr(getattr(self, output_type), "output_data", output_array)
+                memmap_registry[(output_type, None, None)] = output_array
+
+            print(f"Preallocated disk space for {output_type}")
+        return memmap_registry
 
     def load_cdr3(self, cdr3_path):
         """Load CDR3 sequences and store in a dictionary."""
@@ -339,6 +337,7 @@ class BaseEmbedder:
             B = toks.size(0)
             if B == 1:
                 # can’t split anymore
+                print("OOM on single sample!")
                 raise
             # split into two roughly equal chunks
             half = B // 2
@@ -767,170 +766,66 @@ class BaseEmbedder:
             else:
                 self.cdr3_extracted["output_data"][layer].extend(tensor)
 
-    def write_batch_to_disk(self, mmapped_array, tensor, offset):
-        try:
-            tensor_np = (
-                tensor.contiguous().cpu().numpy()
-            )  # convert to numpy array for memory mapping
-            del tensor
-            batch_size = tensor_np.shape[0]
-            mmapped_array[offset : offset + batch_size, ...] = tensor_np
-            mmapped_array.flush()
-        except Exception as e:
-            print(f"Error while writing batch to disk: {e}")
-        finally:
-            if "tensor_np" in locals():
-                del tensor_np
-            gc.collect()
+    def _prepare_tensor(self, data_list, flatten):
+        tensor = torch.stack(data_list, dim=0)
+        if flatten:
+            tensor = tensor.flatten(start_dim=1)
+        return tensor.numpy().astype(self._precision_to_dtype(self.precision, "numpy"))
 
     def export_to_disk(self):
-        """Stack representations of each layer into a single tensor and save to output file."""
-        output_name = os.path.splitext(os.path.basename(self.fasta_path))[
-            0
-        ]  # get filename without extension and path
         for output_type in self.output_types:
             print(f"Saving {output_type} representations...")
-            if "attention_matrices" not in output_type:  # save embeddings
+
+            output_data = getattr(self, output_type)["output_data"]
+            output_dir = getattr(self, output_type)["output_dir"]
+            flatten = self.flatten and "unpooled" in output_type
+
+            if "attention_matrices" not in output_type and "logits" not in output_type:
                 for layer in self.layers:
-                    output_file_layer = os.path.join(
-                        self.output_path,
-                        output_type,
-                        f"{output_name}_{self.model_name}_{output_type}_layer_{layer}.npy",
+                    tensor = self._prepare_tensor(output_data[layer], flatten)
+                    file_path = self._make_output_filepath(
+                        output_type, output_dir, layer
                     )
-                    if "unpooled" not in output_type:
-                        getattr(self, output_type)["output_data"][layer] = torch.vstack(
-                            getattr(self, output_type)["output_data"][layer]
-                        )
-                        stacked = True
-                    if self.flatten and "unpooled" in output_type:
-                        getattr(self, output_type)["output_data"][layer] = torch.stack(
-                            getattr(self, output_type)["output_data"][layer], dim=0
-                        ).flatten(start_dim=1)
-                        stacked = True
-                    elif not self.discard_padding and not stacked:
-                        getattr(self, output_type)["output_data"][layer] = torch.stack(
-                            getattr(self, output_type)["output_data"][layer]
-                        )
-                        stacked = True
-                    # torch.save(
-                    #    (getattr(self, output_type)["output_data"][layer]),
-                    #    output_file_layer,
-                    # )
-                    np.save(
-                        output_file_layer,
-                        getattr(self, output_type)["output_data"][layer]
-                        .numpy()
-                        .astype(np.float16),
-                    )
-                    print(
-                        f"Saved {output_type} representation for layer {layer} to {output_file_layer}"
-                    )
+                    np.save(file_path, tensor)
+                    print(f"Saved {output_type} layer {layer} to {file_path}")
+
             elif "average_all" in output_type:
-                output_file = os.path.join(
-                    self.output_path,
-                    output_type,
-                    f"{self.output_prefix}_{self.model_name}_{output_type}.npy",
-                )
-                if self.flatten:
-                    np.save(
-                        output_file,
-                        torch.stack(getattr(self, output_type)["output_data"], dim=0)
-                        .flatten(start_dim=1)
-                        .numpy()
-                        .astype(np.float16),
-                    )
-                else:
-                    np.save(
-                        output_file,
-                        torch.stack(getattr(self, output_type)["output_data"], dim=0)
-                        .numpy()
-                        .astype(np.float16),
-                    )
-                print(f"Saved {output_type} representation to {output_file}")
+                tensor = self._prepare_tensor(output_data, self.flatten)
+                file_path = self._make_output_filepath(output_type, output_dir)
+                np.save(file_path, tensor)
+                print(f"Saved {output_type} to {file_path}")
+
             elif "average_layer" in output_type:
                 for layer in self.layers:
-                    output_file = os.path.join(
-                        self.output_path,
-                        output_type,
-                        f"{self.output_prefix}_{self.model_name}_{output_type}_layer_{layer}.npy",
+                    tensor = self._prepare_tensor(output_data[layer], self.flatten)
+                    file_path = self._make_output_filepath(
+                        output_type, output_dir, layer
                     )
-                    if self.flatten:
-                        np.save(
-                            output_file,
-                            torch.stack(
-                                getattr(self, output_type)["output_data"][layer], dim=0
-                            )
-                            .flatten(start_dim=1)
-                            .numpy()
-                            .astype(np.float16),
-                        )
-                    else:
-                        np.save(
-                            output_file,
-                            torch.stack(
-                                getattr(self, output_type)["output_data"][layer]
-                            )
-                            .numpy()
-                            .astype(np.float16),
-                        )
-                    print(
-                        f"Saved {output_type} representation for layer {layer} to {output_file}"
-                    )
+                    np.save(file_path, tensor)
+                    print(f"Saved {output_type} layer {layer} to {file_path}")
+
             elif "all_heads" in output_type:
                 for layer in self.layers:
                     for head in range(self.num_heads):
-                        output_file = os.path.join(
-                            self.output_path,
-                            output_type,
-                            f"{self.output_prefix}_{self.model_name}_{output_type}_layer_{layer}_head_{head + 1}.npy",
+                        tensor = self._prepare_tensor(
+                            output_data[layer][head], self.flatten
                         )
-                        if self.flatten:
-                            np.save(
-                                output_file,
-                                torch.stack(
-                                    getattr(self, output_type)["output_data"][layer][
-                                        head
-                                    ],
-                                    dim=0,
-                                )
-                                .flatten(start_dim=1)
-                                .numpy()
-                                .astype(np.float16),
-                            )
-                            # delete the tensor from memory
-                            # del getattr(self, output_type)
-                        else:
-                            np.save(
-                                output_file,
-                                torch.stack(
-                                    getattr(self, output_type)["output_data"][layer][
-                                        head
-                                    ]
-                                )
-                                .numpy()
-                                .astype(np.float16),
-                            )
-                            # delete the tensor from memory
-                            # del getattr(self, output_type)
+                        file_path = self._make_output_filepath(
+                            output_type, output_dir, layer, head
+                        )
+                        np.save(file_path, tensor)
                         print(
-                            f"Saved {output_type} representation for layer {layer} head {head + 1} to {output_file}"
+                            f"Saved {output_type} layer {layer} head {head + 1} to {file_path}"
                         )
+
             elif "logits" in output_type:
                 for layer in self.layers:
-                    output_file = os.path.join(
-                        self.output_path,
-                        output_type,
-                        f"{self.output_prefix}_{self.model_name}_{output_type}_layer_{layer}.npy",
+                    tensor = self._prepare_tensor(output_data[layer], flatten=False)
+                    file_path = self._make_output_filepath(
+                        output_type, output_dir, layer
                     )
-                    np.save(
-                        output_file,
-                        torch.stack(getattr(self, output_type)["output_data"][layer])
-                        .numpy()
-                        .astype(np.float16),
-                    )
-                    print(
-                        f"Saved {output_type} representation for layer {layer} to {output_file}"
-                    )
+                    np.save(file_path, tensor)
+                    print(f"Saved {output_type} layer {layer} to {file_path}")
 
     def export_sequence_indices(self):
         """Save sequence indices to a CSV file."""
@@ -944,14 +839,14 @@ class BaseEmbedder:
                 f.write(f"{i},{label}\n")
         print(f"Saved sequence indices to {output_file_idx}")
 
-    def create_output_dirs(self):
+    def _create_output_dirs(self):
         for output_type in self.output_types:
             output_type_path = os.path.join(self.output_path, output_type)
             if not os.path.exists(output_type_path):
                 os.makedirs(output_type_path)
 
     def run(self):
-        self.create_output_dirs()
+        self._create_output_dirs()
         if self.batch_writing:
             print("Preallocating disk space...")
             for output_type in self.output_types:

@@ -174,6 +174,13 @@ def parse_arguments():
         default=512,
         help="Size (in MB) of outputs to accumulate in RAM per worker (--num_workers) before flushing to disk. Default is 512.",
     )
+    parser.add_argument(
+        "--precision",
+        type=str,
+        default="32",
+        choices=["float16", "16", "half", "float32", "32", "full"],
+        help="Precision of the output data. Inference during embedding is not affected. Default is 'float32'.",
+    )
 
     # TODO add experiment name
     args = parser.parse_args()
