@@ -22,10 +22,4 @@ def main():
 
 
 if __name__ == "__main__":
-    import multiprocessing
-
-    try:
-        multiprocessing.set_start_method("spawn", force=True)  # for MacOS compatibility
-    except RuntimeError:
-        pass  # start method already set
     main()

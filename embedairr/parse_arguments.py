@@ -1,5 +1,5 @@
 import argparse
-from embedairr.model_selecter import select_model, supported_models
+from embedairr.model_selecter import supported_models
 
 
 def str2bool(value):

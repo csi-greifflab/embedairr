@@ -1,12 +1,8 @@
-from typing import Sequence, Tuple
+from typing import Sequence
 from torch.utils.data import Dataset
 import re
 import torch
 import gc
-import os
-import psutil
-import numpy as np
-import tracemalloc
 from transformers import RoFormerTokenizer
 import threading, queue
 from alive_progress import alive_bar
@@ -45,7 +41,7 @@ class SequenceDictDataset(Dataset):
         if cdr3_dict:
             self.cdr3_dict = cdr3_dict
             self.context = context
-            self.filtered_cdr3_data = self.filter_cdr3()
+            self.filtered_cdr3_data = self._filter_cdr3()
         else:
             self.cdr3_dict = None
             self.context = None
@@ -58,7 +54,7 @@ class SequenceDictDataset(Dataset):
     def __len__(self):
         return len(self.data)
 
-    def filter_cdr3(self):
+    def _filter_cdr3(self):
         """Filter the cdr3_dict to only include sequences that are in the dataset."""
         labels, _ = zip(*self.data)
         filtered_cdr3_dict = {
@@ -69,7 +65,7 @@ class SequenceDictDataset(Dataset):
         ), "Not all sequences have matching CDR3 sequences."
         return filtered_cdr3_dict.items()
 
-    def get_subsequence_masks(self):
+    def _get_subsequence_masks(self):
         """Get the subsequence masks for the CDR3 sequences."""
         # Get the full sequences and CDR3 sequences
         full_sequence_tokens = [entry[2] for entry in self.encoded_data]
@@ -77,13 +73,13 @@ class SequenceDictDataset(Dataset):
 
         # Create masks for each sequence
         masks = [
-            self.find_subsequence(full_seq, cdr3_seq, self.pad_token_id)
+            self._find_subsequence(full_seq, cdr3_seq, self.pad_token_id)
             for full_seq, cdr3_seq in zip(full_sequence_tokens, cdr3_sequences_tokens)
         ]
 
         return list(masks)
 
-    def find_subsequence(self, full_tensor, subtensor, pad_token_id=0):
+    def _find_subsequence(self, full_tensor, subtensor, pad_token_id=0):
         subsequence_mask = torch.zeros_like(full_tensor)
 
         # Remove padding from b
@@ -130,27 +126,27 @@ class HuggingFaceDataset(SequenceDictDataset):
         add_special_tokens=True,
     ):
         super().__init__(sequences, cdr3_dict, context)
-        self.encoded_data = self.encode_sequences(
+        self.encoded_data = self._encode_sequences(
             self.data, tokenizer, max_length, add_special_tokens
         )  # (label, seq, toks, attention_mask)
         self.pad_token_id = tokenizer.pad_token_type_id
         if self.cdr3_dict:
             print("Tokenizing CDR3 sequences...")
-            self.encoded_cdr3_data = self.encode_sequences(
+            self.encoded_cdr3_data = self._encode_sequences(
                 self.filtered_cdr3_data,
                 tokenizer,
                 "max_length",
                 add_special_tokens=False,
             )  # (label, seq, toks, attention_mask)
-            self.cdr3_masks = self.get_subsequence_masks()
+            self.cdr3_masks = self._get_subsequence_masks()
 
-    def encode_sequences(self, data, tokenizer, max_length, add_special_tokens):
+    def _encode_sequences(self, data, tokenizer, max_length, add_special_tokens):
         labels, strs = zip(*data)
         if isinstance(tokenizer, RoFormerTokenizer):
             # RoFormerTokenizer requires space-separated tokenization
             # for the input sequences
             print("Using RoFormerTokenizer, applying gap_sequence.")
-            strs = self.gap_sequence(strs)
+            strs = self._gap_sequence(strs)
             max_token_length = max(len(seq.split(" ")) for seq in strs)
         else:
             # For other tokenizers, use the default tokenization
@@ -184,7 +180,7 @@ class HuggingFaceDataset(SequenceDictDataset):
         attention_masks = torch.cat(loop_attention_mask, dim=0)
         return list(zip(labels, strs, list(toks), list(attention_masks)))
 
-    def gap_sequence(self, sequences: Sequence[str]) -> Sequence[str]:
+    def _gap_sequence(self, sequences: Sequence[str]) -> Sequence[str]:
         """Space-separated tokenization for RoFormer input."""
         seqs = [" ".join(re.findall(r"\[.*?\]|.", sequence)) for sequence in sequences]
         return seqs
@@ -236,7 +232,7 @@ class ESMDataset(SequenceDictDataset):
         append_eos=True,
     ):
         super().__init__(sequences, cdr3_dict, context)
-        self.encoded_data = self.encode_sequences(
+        self.encoded_data = self._encode_sequences(
             self.data,
             alphabet,
             max_length,
@@ -246,7 +242,7 @@ class ESMDataset(SequenceDictDataset):
         self.pad_token_id = alphabet.padding_idx
         if self.cdr3_dict:
             print("Tokenizing CDR3 sequences...")
-            self.encoded_cdr3_data = self.encode_sequences(
+            self.encoded_cdr3_data = self._encode_sequences(
                 self.filtered_cdr3_data,
                 alphabet,
                 "max_length",
@@ -254,9 +250,9 @@ class ESMDataset(SequenceDictDataset):
                 append_eos=False,
             )  # (label, seq, toks)
             print("Matching CDR3 sequences to full sequences...")
-            self.cdr3_masks = self.get_subsequence_masks()
+            self.cdr3_masks = self._get_subsequence_masks()
 
-    def encode_sequences(
+    def _encode_sequences(
         self, data, alphabet, max_length, prepend_bos=True, append_eos=True
     ):
         labels, strs = zip(*data)
@@ -368,103 +364,6 @@ def flush_memmaps(obj):
     elif isinstance(obj, dict):
         for value in obj.values():
             flush_memmaps(value)
-
-
-import os
-import gc
-import sys
-import psutil
-import numpy as np
-import tracemalloc
-
-try:
-    import torch
-
-    TORCH_AVAILABLE = True
-except ImportError:
-    TORCH_AVAILABLE = False
-
-import csv
-import datetime
-
-
-class MemoryProfiler:
-    def __init__(
-        self, memmap_paths=None, enable_tracemalloc=True, log_path="memory_log.csv"
-    ):
-        self.process = psutil.Process()
-        self.memmap_paths = memmap_paths or []
-        self.log_path = log_path
-
-        if enable_tracemalloc:
-            tracemalloc.start()
-
-        self._init_log_file()
-
-    def _init_log_file(self):
-        # Only write header if file doesn't exist
-        if not os.path.exists(self.log_path):
-            with open(self.log_path, "w", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerow(
-                    [
-                        "timestamp",
-                        "tag",
-                        "rss_gb",
-                        "numpy_mb",
-                        "torch_mb",
-                        "memmap_mb",
-                        "tracemalloc_top1",
-                        "tracemalloc_top2",
-                        "tracemalloc_top3",
-                    ]
-                )
-
-    def log(self, tag=""):
-        rss_gb = self.process.memory_info().rss / 1e9
-
-        # NumPy buffers
-        numpy_bytes = sum(
-            arr.nbytes for arr in gc.get_objects() if isinstance(arr, np.ndarray)
-        )
-
-        # PyTorch tensor memory (CPU only)
-        torch_bytes = 0
-        if TORCH_AVAILABLE:
-            torch_bytes = sum(
-                t.element_size() * t.nelement()
-                for t in gc.get_objects()
-                if isinstance(t, torch.Tensor)
-            )
-
-        # Memmap file sizes
-        memmap_bytes = sum(
-            os.path.getsize(path) for path in self.memmap_paths if os.path.exists(path)
-        )
-
-        # Tracemalloc top 3
-        top_stats = []
-        if tracemalloc.is_tracing():
-            snapshot = tracemalloc.take_snapshot()
-            top_stats = snapshot.statistics("lineno")[:3]
-
-        top_lines = [str(stat) for stat in top_stats]
-        top_lines += [""] * (3 - len(top_lines))  # pad to always 3
-
-        # Write to CSV
-        with open(self.log_path, "a", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(
-                [
-                    datetime.datetime.now().isoformat(),
-                    tag,
-                    f"{rss_gb:.2f}",
-                    f"{numpy_bytes / 1e6:.2f}",
-                    f"{torch_bytes / 1e6:.2f}",
-                    f"{memmap_bytes / 1e6:.2f}",
-                    *top_lines,
-                ]
-            )
 
 
 class IOFlushWorker(threading.Thread):
