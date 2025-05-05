@@ -371,7 +371,7 @@ class BaseEmbedder:
                 flush_bytes_limit=self.flush_batches_after,  # Total per thread
             )
         with alive_bar(
-            len(self.data_loader),
+            len(self.sequences),
             title=f"{self.model_name}: Generating embeddings ...",
         ) as bar, torch.no_grad():
             offset = 0
@@ -412,7 +412,7 @@ class BaseEmbedder:
                 offset += len(toks)
 
                 self.sequence_labels.extend(labels)
-                bar()
+                bar(len(toks))
             if self.batch_writing:
                 self.io_dispatcher.stop()
             print("Finished extracting embeddings")
