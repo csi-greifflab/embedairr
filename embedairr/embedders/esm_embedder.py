@@ -113,7 +113,7 @@ class ESMEmbedder(BaseEmbedder):
         max_length = dataset.get_max_encoded_length()
         return data_loader, max_length
 
-    def compute_outputs(
+    def _compute_outputs(
         self,
         model,
         toks,
