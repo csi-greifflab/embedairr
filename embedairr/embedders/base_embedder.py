@@ -321,7 +321,7 @@ class BaseEmbedder:
         recurse on each half, then concatenate.
         """
         try:
-            return self.compute_outputs(
+            return self._compute_outputs(
                 self.model,
                 toks,
                 attention_mask,
