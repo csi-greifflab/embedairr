@@ -367,74 +367,63 @@ def flush_memmaps(obj):
 
 
 class IOFlushWorker(threading.Thread):
-    def __init__(self, memmap_registry, flush_bytes_limit=64 * 1024 * 1024):
+    def __init__(
+        self, memmap_registry, flush_bytes_limit=64 * 1024 * 1024
+    ):  # e.g. 64 MB
         super().__init__()
-        self.memmap_registry = memmap_registry
+        self.memmap_registry = (
+            memmap_registry  # Dict: (output_type, layer, head) → memmap
+        )
         self.flush_limit = flush_bytes_limit
         self.write_q = queue.Queue(maxsize=128)
-        self.buffers = {}  # key → {'active': [], 'flushing': [], 'bytes': int}
+        self.buffer = {}  # (output_type, layer, head) → list of (offset, array)
+        self.buffered_bytes = {}  # (output_type, layer, head) → total bytes
         self.total_buffered = 0
         self.lock = threading.Lock()
         self.shutdown_flag = threading.Event()
-        self.flush_executor = threading.Thread(target=self._background_flusher)
-        self.flush_signal = threading.Event()
 
     def run(self):
-        self.flush_executor.start()
-        while True:
-            item = self.write_q.get()
+        while not self.shutdown_flag.is_set():
+            try:
+                item = self.write_q.get(timeout=1)
+            except queue.Empty:
+                continue
             if item is None:
                 break
             key, offset, array = item
             arr_bytes = array.nbytes
 
             with self.lock:
-                buf = self.buffers.setdefault(
-                    key, {"active": [], "flushing": [], "bytes": 0}
-                )
-                buf["active"].append((offset, array))
-                buf["bytes"] += arr_bytes
+                self.buffer.setdefault(key, []).append((offset, array))
+                self.buffered_bytes[key] = self.buffered_bytes.get(key, 0) + arr_bytes
                 self.total_buffered += arr_bytes
 
                 if self.total_buffered >= self.flush_limit:
-                    self._swap_buffers()
-                    self.flush_signal.set()
+                    self.flush_all()
 
-        self._swap_buffers()
-        self.flush_signal.set()
-        self.shutdown_flag.set()
-        self.flush_executor.join()
+        # Final flush
+        self.flush_all()
 
-    def _swap_buffers(self):
-        for buf in self.buffers.values():
-            buf["active"], buf["flushing"], buf["bytes"] = [], buf["active"], 0
+    def flush_all(self):
+        for key in list(self.buffer.keys()):
+            self.flush_key(key)
+        self.total_buffered = 0
 
-    def _background_flusher(self):
-        while not self.shutdown_flag.is_set() or any(
-            buf["flushing"] for buf in self.buffers.values()
-        ):
-            self.flush_signal.wait(timeout=1)
-            self.flush_signal.clear()
-
-            with self.lock:
-                for key, buf in self.buffers.items():
-                    if buf["flushing"]:
-                        self._flush_key(key, buf)
-
-    def _flush_key(self, key, buf):
+    def flush_key(self, key):
         mmap_handle = self.memmap_registry[key]
-        for offset, arr in buf["flushing"]:
+        for offset, arr in self.buffer[key]:
             mmap_handle[offset : offset + arr.shape[0]] = arr
         mmap_handle.flush()
-        self.total_buffered -= buf["bytes"]
-        buf["bytes"] = 0
-        buf["flushing"].clear()
+        self.total_buffered -= self.buffered_bytes.get(key, 0)
+        self.buffered_bytes[key] = 0
+        self.buffer[key].clear()
 
     def enqueue(self, output_type, layer, head, offset, array):
         key = (output_type, layer, head)
         self.write_q.put((key, offset, array))
 
     def stop(self):
+        self.shutdown_flag.set()
         self.write_q.put(None)
         self.join()
 
