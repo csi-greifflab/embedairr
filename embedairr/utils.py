@@ -381,11 +381,8 @@ class IOFlushWorker(threading.Thread):
 
     def run(self):
         self.flush_executor.start()
-        while not self.shutdown_flag.is_set():
-            try:
-                item = self.write_q.get(timeout=1)
-            except queue.Empty:
-                continue
+        while True:
+            item = self.write_q.get()
             if item is None:
                 break
             key, offset, array = item
@@ -404,8 +401,8 @@ class IOFlushWorker(threading.Thread):
                     self.flush_signal.set()
 
         self._swap_buffers()
-        self.shutdown_flag.set()
         self.flush_signal.set()
+        self.shutdown_flag.set()
         self.flush_executor.join()
 
     def _swap_buffers(self):
@@ -438,9 +435,7 @@ class IOFlushWorker(threading.Thread):
         self.write_q.put((key, offset, array))
 
     def stop(self):
-        self.shutdown_flag.set()
         self.write_q.put(None)
-        self.flush_signal.set()
         self.join()
 
 
