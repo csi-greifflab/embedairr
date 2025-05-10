@@ -6,7 +6,7 @@ import numpy as np
 from numpy.lib.format import open_memmap
 import inspect
 import gc
-from embedairr.utils import MultiIODispatcher
+from embedairr.utils import IOFlushWorker
 from alive_progress import alive_bar
 
 
@@ -365,11 +365,10 @@ class BaseEmbedder:
     def embed(self):
         if self.batch_writing:
             # Start centralized I/O dispatcher
-            self.io_dispatcher = MultiIODispatcher(
-                self.memmap_registry,
-                num_workers=self.num_workers,  # Adjust depending on your storage backend
-                flush_bytes_limit=self.flush_batches_after,  # Total per thread
+            self.io_dispatcher = IOFlushWorker(
+                self.memmap_registry, flush_bytes_limit=self.flush_batches_after
             )
+            self.io_dispatcher.start()
         with alive_bar(
             len(self.sequences),
             title=f"{self.model_name}: Generating embeddings ...",
