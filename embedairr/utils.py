@@ -431,14 +431,7 @@ class IOFlushWorker(threading.Thread):
 
     def enqueue(self, output_type, layer, head, offset, array):
         key = (output_type, layer, head)
-        while True:
-            try:
-                self.write_q.put((key, offset, array), timeout=5)
-                break
-            except queue.Full:
-                # If the queue is full, wait and retry
-                print("Write queue is full, waiting to enqueue...")
-                time.sleep(0.1)
+        self.write_q.put((key, offset, array))
 
     def stop(self):
         self.write_q.join()  # Wait for all enqueued writes to finish
