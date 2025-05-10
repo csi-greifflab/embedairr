@@ -2,6 +2,7 @@ from typing import Sequence
 from torch.utils.data import Dataset
 import re
 import torch
+import time
 import gc
 from transformers import RoFormerTokenizer
 import threading, queue
@@ -390,19 +391,29 @@ class IOFlushWorker(threading.Thread):
                 continue
             if item is None:
                 break
-            key, offset, array = item
-            arr_bytes = array.nbytes
+            try:
+                key, offset, array = item
+                arr_bytes = array.nbytes
 
-            with self.lock:
-                self.buffer.setdefault(key, []).append((offset, array))
-                self.buffered_bytes[key] = self.buffered_bytes.get(key, 0) + arr_bytes
-                self.total_buffered += arr_bytes
+                with self.lock:
+                    self.buffer.setdefault(key, []).append((offset, array))
+                    self.buffered_bytes[key] = (
+                        self.buffered_bytes.get(key, 0) + arr_bytes
+                    )
+                    self.total_buffered += arr_bytes
 
-                if self.total_buffered >= self.flush_limit:
-                    self.flush_all()
+                    if self.total_buffered >= self.flush_limit:
+                        self.flush_all()
+            except Exception as e:
+                print(f"[IOFlushWorker] Exception during enqueue: {e}")
+            finally:
+                self.write_q.task_done()
 
         # Final flush
-        self.flush_all()
+        try:
+            self.flush_all()
+        except Exception as e:
+            print(f"[IOFlushWorker] Exception during final flush: {e}")
 
     def flush_all(self):
         for key in list(self.buffer.keys()):
@@ -420,11 +431,24 @@ class IOFlushWorker(threading.Thread):
 
     def enqueue(self, output_type, layer, head, offset, array):
         key = (output_type, layer, head)
-        self.write_q.put((key, offset, array))
+        while True:
+            try:
+                self.write_q.put((key, offset, array), timeout=5)
+                break
+            except queue.Full:
+                # If the queue is full, wait and retry
+                print("Write queue is full, waiting to enqueue...")
+                time.sleep(0.1)
 
     def stop(self):
+        self.write_q.join()  # Wait for all enqueued writes to finish
         self.shutdown_flag.set()
-        self.write_q.put(None)
+        while True:
+            try:
+                self.write_q.put(None, timeout=1)
+                break
+            except queue.Full:
+                print("Write queue full during shutdown; retrying...")
         self.join()
 
 
