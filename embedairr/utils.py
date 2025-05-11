@@ -383,6 +383,9 @@ class IOFlushWorker(threading.Thread):
         self.lock = threading.Lock()
         self.shutdown_flag = threading.Event()
 
+    def queue_fullness(self):
+        return self.write_q.qsize() / self.write_q.maxsize
+
     def run(self):
         while not self.shutdown_flag.is_set():
             try:
