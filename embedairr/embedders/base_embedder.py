@@ -8,6 +8,7 @@ import inspect
 import gc
 from embedairr.utils import IOFlushWorker
 from alive_progress import alive_bar
+import time
 
 
 class BaseEmbedder:
@@ -402,6 +403,13 @@ class BaseEmbedder:
                     "offset": offset,
                     "special_tokens": not self.disable_special_tokens,
                 }
+                if self.batch_writing:
+                    # Apply backpressure if write queue is too full
+                    while self.io_dispatcher.queue_fullness() > 0.9:
+                        print(
+                            "[embed] Backpressure: waiting for IOFlushWorker to catch up..."
+                        )
+                        time.sleep(0.05)
                 self._extract_batch(output_bundle)
 
                 del logits, representations, attention_matrices

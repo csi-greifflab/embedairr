@@ -421,17 +421,28 @@ class IOFlushWorker(threading.Thread):
         self.total_buffered = 0
 
     def flush_key(self, key):
-        mmap_handle = self.memmap_registry[key]
-        for offset, arr in self.buffer[key]:
-            mmap_handle[offset : offset + arr.shape[0]] = arr
-        mmap_handle.flush()
-        self.total_buffered -= self.buffered_bytes.get(key, 0)
-        self.buffered_bytes[key] = 0
-        self.buffer[key].clear()
+        try:
+            mmap_handle = self.memmap_registry[key]
+            for offset, arr in self.buffer[key]:
+                mmap_handle[offset : offset + len(arr)] = arr
+            mmap_handle.flush()
+        except Exception as e:
+            print(f"[IOFlushWorker] Exception during flush: {e}")
+            raise e
+        finally:
+            self.total_buffered -= self.buffered_bytes.get(key, 0)
+            self.buffered_bytes[key] = 0
+            self.buffer[key].clear()
 
     def enqueue(self, output_type, layer, head, offset, array):
         key = (output_type, layer, head)
-        self.write_q.put((key, offset, array))
+        while True:
+            try:
+                self.write_q.put((key, offset, array), timeout=1)
+                break
+            except queue.Full:
+                print("[IOFlushWorker] Write queue full, waiting to enqueue...")
+                time.sleep(0.1)
 
     def stop(self):
         self.write_q.join()  # Wait for all enqueued writes to finish
@@ -442,7 +453,11 @@ class IOFlushWorker(threading.Thread):
                 break
             except queue.Full:
                 print("Write queue full during shutdown; retrying...")
+                time.sleep(0.1)
         self.join()
+        # Force one final flush here too, as backup
+        with self.lock:
+            self.flush_all()
 
 
 class MultiIODispatcher:
