@@ -382,6 +382,8 @@ class IOFlushWorker(threading.Thread):
         self.total_buffered = 0
         self.lock = threading.Lock()
         self.shutdown_flag = threading.Event()
+        self.outstanding_enqueues = 0
+        self.done_enqueuing = threading.Event()
 
     def queue_fullness(self):
         return self.write_q.qsize() / self.write_q.maxsize
@@ -438,6 +440,8 @@ class IOFlushWorker(threading.Thread):
             self.buffer[key].clear()
 
     def enqueue(self, output_type, layer, head, offset, array):
+        with self.lock:
+            self.outstanding_enqueues += 1
         key = (output_type, layer, head)
         while True:
             try:
@@ -446,8 +450,13 @@ class IOFlushWorker(threading.Thread):
             except queue.Full:
                 print("[IOFlushWorker] Write queue full, waiting to enqueue...")
                 time.sleep(0.1)
+        with self.lock:
+            self.outstanding_enqueues -= 1
+            if self.outstanding_enqueues == 0:
+                self.done_enqueuing.set()
 
     def stop(self):
+        self.done_enqueuing.wait()  # Wait for all enqueued writes to finish
         self.write_q.join()  # Wait for all enqueued writes to finish
         self.shutdown_flag.set()
         while True:

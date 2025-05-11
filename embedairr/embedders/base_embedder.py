@@ -405,7 +405,7 @@ class BaseEmbedder:
                 }
                 if self.batch_writing:
                     # Apply backpressure if write queue is too full
-                    while self.io_dispatcher.queue_fullness() > 0.9:
+                    while self.io_dispatcher.queue_fullness() > 0.6:
                         print(
                             "[embed] Backpressure: waiting for IOFlushWorker to catch up..."
                         )
