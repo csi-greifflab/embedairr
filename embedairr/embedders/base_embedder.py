@@ -6,7 +6,7 @@ import numpy as np
 from numpy.lib.format import open_memmap
 import inspect
 import gc
-from embedairr.utils import IOFlushWorker
+from embedairr.utils import IOFlushWorker, check_disk_free_space
 from alive_progress import alive_bar
 import time
 
@@ -265,13 +265,13 @@ class BaseEmbedder:
 
     def preallocate_disk_space(self):
         memmap_registry = {}
+        total_bytes = 0
         for output_type in self.output_types:
             output_data = getattr(self, output_type)["output_data"]
             shape = getattr(self, output_type)["shape"]
             output_dir = getattr(self, output_type)["output_dir"]
-            np_dtype = self._precision_to_dtype(
-                self.precision, "numpy"
-            )  # TODO: make configurable
+            np_dtype = self._precision_to_dtype(self.precision, "numpy")
+            bytes_per_array = np.dtype(np_dtype).itemsize * np.prod(shape)
 
             if isinstance(output_data, dict):
                 for layer in self.layers:
@@ -286,6 +286,7 @@ class BaseEmbedder:
                             memmap_registry[(output_type, layer, head)] = output_data[
                                 layer
                             ][head]
+                            total_bytes += bytes_per_array
                     else:
                         file_path = self._make_output_filepath(
                             output_type, output_dir, layer
@@ -294,6 +295,7 @@ class BaseEmbedder:
                             file_path, mode="w+", dtype=np_dtype, shape=shape
                         )
                         memmap_registry[(output_type, layer, None)] = output_data[layer]
+                        total_bytes += bytes_per_array
             else:
                 file_path = self._make_output_filepath(output_type, output_dir)
                 output_array = open_memmap(
@@ -301,8 +303,10 @@ class BaseEmbedder:
                 )
                 setattr(getattr(self, output_type), "output_data", output_array)
                 memmap_registry[(output_type, None, None)] = output_array
+                total_bytes += bytes_per_array
 
-            print(f"Preallocated disk space for {output_type}")
+        print(f"Preparing to write {total_bytes / 1024**3:.2f} GB to disk.")
+        check_disk_free_space(self.output_path, total_bytes)
         return memmap_registry
 
     def _load_cdr3(self, cdr3_path):

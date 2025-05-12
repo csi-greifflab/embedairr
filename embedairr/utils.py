@@ -7,6 +7,7 @@ import gc
 from transformers import RoFormerTokenizer
 import threading, queue
 from alive_progress import alive_bar
+import shutil
 
 
 class TokenBudgetBatchSampler:
@@ -367,6 +368,15 @@ def flush_memmaps(obj):
             flush_memmaps(value)
 
 
+def check_disk_free_space(path, min_free_bytes):
+    _, _, free = shutil.disk_usage(path)
+    if free < min_free_bytes:
+        raise ValueError(
+            f"Not enough disk space. Required: {min_free_bytes} bytes, Available: {free} bytes"
+        )
+    print(f"Disk space check passed. Available: {free} bytes")
+
+
 class IOFlushWorker(threading.Thread):
     def __init__(
         self, memmap_registry, flush_bytes_limit=64 * 1024 * 1024
@@ -470,20 +480,63 @@ class IOFlushWorker(threading.Thread):
         # Force one final flush here too, as backup
         with self.lock:
             self.flush_all()
+            # Task completion check:
+            remaining_in_queue = self.write_q.qsize()
+            assert (
+                remaining_in_queue == 0
+            ), f"Write queue not empty: {remaining_in_queue} remaining"
+
+            pending_buffered = sum(len(buf) for buf in self.buffer.values())
+            assert (
+                pending_buffered == 0
+            ), f"Pending buffered writes remaining: {pending_buffered}"
 
 
 class MultiIODispatcher:
     def __init__(
-        self, memmap_registry, num_workers=4, flush_bytes_limit=64 * 1024 * 1024
+        self,
+        memmap_registry,
+        num_workers=4,
+        flush_bytes_limit=64 * 1024 * 1024,
+        heavy_output_type="embeddings_unpooled",
+        heavy_proportion=0.75,
     ):
         self.num_workers = num_workers
+        self.heavy_output_type = heavy_output_type
+        # Check if heavy keys exist
+        num_heavy_keys = sum(
+            1 for key in memmap_registry if key[0] == self.heavy_output_type
+        )
+
+        if num_heavy_keys == 0:
+            print(
+                f"[MultiIODispatcher] WARNING: No keys found for heavy_output_type '{self.heavy_output_type}'. Reassigning all workers to light workload."
+            )
+            self.num_heavy_workers = 0
+            self.num_light_workers = num_workers
+        else:
+            self.num_heavy_workers = max(1, int(num_workers * heavy_proportion))
+            self.num_light_workers = num_workers - self.num_heavy_workers
+            assert self.num_light_workers >= 1, "You need at least one light worker"
         self.workers = []
+        self.heavy_workers = []
+        self.light_workers = []
 
         # Distribute files across workers by hashing the key
         sharded_registries = [{} for _ in range(num_workers)]
+
         for key, mmap in memmap_registry.items():
-            shard_id = hash(key) % num_workers
+            output_type = key[0]  # assuming key = (output_type, layer, head)
+            if output_type == self.heavy_output_type and self.num_heavy_workers > 0:
+                # Only assign heavy keys to heavy workers
+                shard_id = hash(key) % self.num_heavy_workers
+            else:
+                # Assign light keys to light workers
+                shard_id = self.num_heavy_workers + (hash(key) % self.num_light_workers)
             sharded_registries[shard_id][key] = mmap
+
+        for i, reg in enumerate(sharded_registries):
+            print(f"[MultiIODispatcher] Worker {i} assigned {len(reg)} keys")
 
         for i in range(num_workers):
             worker = IOFlushWorker(
@@ -492,11 +545,30 @@ class MultiIODispatcher:
             )
             worker.start()
             self.workers.append(worker)
+        # Assign worker groups
+        self.heavy_workers = (
+            self.workers[: self.num_heavy_workers] if self.num_heavy_workers > 0 else []
+        )
+        self.light_workers = self.workers[self.num_heavy_workers :]
+
+    def queue_fullness(self):
+        # Return max fullness across all workers (pessimistic view)
+        return max(worker.queue_fullness() for worker in self.workers)
 
     def enqueue(self, output_type, layer, head, offset, array):
         key = (output_type, layer, head)
-        shard_id = hash(key) % self.num_workers
-        self.workers[shard_id].enqueue(output_type, layer, head, offset, array)
+        if output_type == self.heavy_output_type:
+            # Route heavy output_type to heavy_workers (hashed for key affinity)
+            worker_id = hash(key) % self.num_heavy_workers
+            self.heavy_workers[worker_id].enqueue(
+                output_type, layer, head, offset, array
+            )
+        else:
+            # Route other output_types to light_workers
+            worker_id = hash(key) % self.num_light_workers
+            self.light_workers[worker_id].enqueue(
+                output_type, layer, head, offset, array
+            )
 
     def stop(self):
         for worker in self.workers:
