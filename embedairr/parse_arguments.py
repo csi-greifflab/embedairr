@@ -128,7 +128,6 @@ def parse_arguments():
     parser.add_argument(
         "--max_length",
         default="max_length",
-        type=int,
         help="Length to which sequences will be padded. Default is longest sequence.",
     )
     parser.add_argument(
