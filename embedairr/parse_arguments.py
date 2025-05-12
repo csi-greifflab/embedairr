@@ -128,6 +128,7 @@ def parse_arguments():
     parser.add_argument(
         "--max_length",
         default="max_length",
+        type=int,
         help="Length to which sequences will be padded. Default is longest sequence.",
     )
     parser.add_argument(
@@ -140,8 +141,8 @@ def parse_arguments():
     parser.add_argument(
         "--num_workers",
         type=int,
-        default=4,
-        help="Number of workers for asynchronous data writing. Only relevant when --batch_writing is enabled. Default is 4.",
+        default=8,
+        help="Number of workers for asynchronous data writing. Only relevant when --batch_writing is enabled. Default is 8.",
     )
     parser.add_argument(
         "--disable_special_tokens",
@@ -171,7 +172,7 @@ def parse_arguments():
     parser.add_argument(
         "--flush_batches_after",
         type=int,
-        default=512,
+        default=64,
         help="Size (in MB) of outputs to accumulate in RAM per worker (--num_workers) before flushing to disk. Default is 512.",
     )
     parser.add_argument(
@@ -182,6 +183,5 @@ def parse_arguments():
         help="Precision of the output data. Inference during embedding is not affected. Default is 'float32'.",
     )
 
-    # TODO add experiment name
     args = parser.parse_args()
     return args

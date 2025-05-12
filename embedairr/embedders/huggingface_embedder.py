@@ -4,6 +4,10 @@ import embedairr.utils
 from embedairr.embedders.base_embedder import BaseEmbedder
 from transformers import T5EncoderModel, T5Tokenizer
 from transformers import RoFormerTokenizer, RoFormerModel
+from transformers.models.roformer.modeling_roformer import (
+    RoFormerSinusoidalPositionalEmbedding,
+)
+
 
 # Set max_split_size_mb
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
@@ -122,6 +126,7 @@ class Antiberta2Embedder(HuggingfaceEmbedder):
             self.sequences, self.cdr3_dict
         )
         self._set_output_objects()
+        assert self.max_length <= 256, "AntiBERTa2 only supports max_length <= 256"
 
     def _initialize_model(self, model_link="alchemab/antiberta2-cssp"):
         """Initialize the model, tokenizer, and device."""

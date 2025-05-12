@@ -6,7 +6,7 @@ import numpy as np
 from numpy.lib.format import open_memmap
 import inspect
 import gc
-from embedairr.utils import IOFlushWorker, check_disk_free_space
+from embedairr.utils import MultiIODispatcher, check_disk_free_space
 from alive_progress import alive_bar
 import time
 
@@ -370,10 +370,11 @@ class BaseEmbedder:
     def embed(self):
         if self.batch_writing:
             # Start centralized I/O dispatcher
-            self.io_dispatcher = IOFlushWorker(
-                self.memmap_registry, flush_bytes_limit=self.flush_batches_after
+            self.io_dispatcher = MultiIODispatcher(
+                self.memmap_registry,
+                flush_bytes_limit=self.flush_batches_after,
+                heavy_output_type="embeddings_unpooled",
             )
-            self.io_dispatcher.start()
         with alive_bar(
             len(self.sequences),
             title=f"{self.model_name}: Generating embeddings ...",

@@ -322,6 +322,11 @@ def check_input_tokens(valid_tokens, sequences, model_name):
         for label, sequence in sequences.items():
             if "esm" not in model_name:
                 sequence = re.findall(r"\[.*?\]|.", sequence)
+                if "antiberta" in model_name:  # check for longest sequence
+                    assert (
+                        len(sequence) <= 256
+                    ), f"Antiberta2 does not support sequences longer than 256 tokens. Found {len(sequence)} tokens in sequence {label}."
+
             else:
                 sequence = re.findall(r"<.*?>|.", sequence)
             if not set(sequence).issubset(valid_tokens):
