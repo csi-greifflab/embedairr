@@ -1,5 +1,8 @@
+import logging
 from embedairr.model_selecter import select_model
 from embedairr.parse_arguments import parse_arguments
+
+logger = logging.getLogger("embedairr.__main__")
 
 
 def main():
@@ -14,11 +17,11 @@ def main():
 
     embedder = selected_model(args)
 
-    print("Embedder initialized")
+    logger.info("Embedder initialized")
 
     embedder.run()
 
-    print("All outputs saved.")
+    logger.info("All outputs saved.")
 
 
 if __name__ == "__main__":

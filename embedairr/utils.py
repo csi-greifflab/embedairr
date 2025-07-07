@@ -1,3 +1,4 @@
+import logging
 from typing import Sequence
 from torch.utils.data import Dataset
 import re
@@ -10,6 +11,8 @@ from transformers import RoFormerTokenizer
 import threading, queue
 from alive_progress import alive_bar
 import shutil
+
+logger = logging.getLogger("embedairr.utils")
 
 
 class TokenBudgetBatchSampler:
@@ -135,7 +138,7 @@ class HuggingFaceDataset(SequenceDictDataset):
         )  # (label, seq, toks, attention_mask)
         self.pad_token_id = tokenizer.pad_token_type_id
         if self.cdr3_dict:
-            print("Tokenizing CDR3 sequences...")
+            logger.info("Tokenizing CDR3 sequences...")
             self.encoded_cdr3_data = self._encode_sequences(
                 self.filtered_cdr3_data,
                 tokenizer,
@@ -149,7 +152,7 @@ class HuggingFaceDataset(SequenceDictDataset):
         if isinstance(tokenizer, RoFormerTokenizer):
             # RoFormerTokenizer requires space-separated tokenization
             # for the input sequences
-            print("Using RoFormerTokenizer, applying gap_sequence.")
+            logger.info("Using RoFormerTokenizer, applying gap_sequence.")
             strs = self._gap_sequence(strs)
             max_token_length = max(len(seq.split(" ")) for seq in strs)
         else:
@@ -158,9 +161,9 @@ class HuggingFaceDataset(SequenceDictDataset):
 
         if max_length == "max_length":
             max_length = max_token_length
-            print(f"Setting max_length to {max_length}.")
+            logger.info(f"Setting max_length to {max_length}.")
         elif isinstance(max_length, int) and max_length < max_token_length:
-            print(
+            logger.warning(
                 f"max_length {max_length} is less than the length of the longest sequence: {max_token_length}. Setting max_length to {max_token_length}."
             )
             max_length = max_token_length
@@ -245,7 +248,7 @@ class ESMDataset(SequenceDictDataset):
         )  # (label, seq, toks)
         self.pad_token_id = alphabet.padding_idx
         if self.cdr3_dict:
-            print("Tokenizing CDR3 sequences...")
+            logger.info("Tokenizing CDR3 sequences...")
             self.encoded_cdr3_data = self._encode_sequences(
                 self.filtered_cdr3_data,
                 alphabet,
@@ -253,7 +256,7 @@ class ESMDataset(SequenceDictDataset):
                 prepend_bos=False,
                 append_eos=False,
             )  # (label, seq, toks)
-            print("Matching CDR3 sequences to full sequences...")
+            logger.info("Matching CDR3 sequences to full sequences...")
             self.cdr3_masks = self._get_subsequence_masks()
 
     def _encode_sequences(
@@ -271,7 +274,7 @@ class ESMDataset(SequenceDictDataset):
         if max_length == "max_length":
             max_length = max_encoded_length
         elif isinstance(max_length, int) and max_length < max_encoded_length:
-            print(
+            logger.warning(
                 f"max_length {max_length} is less than the length of the longest sequence: {max_encoded_length}. Setting max_length to {max_encoded_length}."
             )
         tokens = torch.empty(
@@ -336,7 +339,7 @@ def check_input_tokens(valid_tokens, sequences, model_name):
                     f"Invalid tokens found in sequence {label}: {set(sequence) - set(valid_tokens)}"
                 )
             bar()
-    print("\nNo invalid tokens in input sequences.")
+    logger.info("No invalid tokens in input sequences.")
 
 
 def fasta_to_dict(fasta_path):
@@ -369,7 +372,7 @@ def flush_memmaps(obj):
     if hasattr(obj, "flush") and callable(obj.flush):
         obj.flush()
         gc.collect()
-        print("Flushed output")
+        logger.debug("Flushed output")
     elif isinstance(obj, dict):
         for value in obj.values():
             flush_memmaps(value)
@@ -381,7 +384,7 @@ def check_disk_free_space(path, min_free_bytes):
         raise ValueError(
             f"Not enough disk space. Required: {min_free_bytes} bytes, Available: {free} bytes"
         )
-    print(f"Disk space check passed. Available: {free} bytes")
+    logger.info(f"Disk space check passed. Available: {free} bytes")
 
 
 class IOFlushWorker(threading.Thread):
@@ -462,7 +465,7 @@ class IOFlushWorker(threading.Thread):
                     if self.total_buffered >= self.flush_limit:
                         self.flush_all()
             except Exception as e:
-                print(f"[IOFlushWorker] Exception during processing: {e}")
+                logger.error(f"[IOFlushWorker] Exception during processing: {e}")
             finally:
                 self.write_q.task_done()
 
@@ -483,7 +486,9 @@ class IOFlushWorker(threading.Thread):
                         )
                         self.total_buffered += arr_bytes
                 except Exception as e:
-                    print(f"[IOFlushWorker] Exception during shutdown processing: {e}")
+                    logger.error(
+                        f"[IOFlushWorker] Exception during shutdown processing: {e}"
+                    )
                 finally:
                     self.write_q.task_done()
             except queue.Empty:
@@ -493,7 +498,7 @@ class IOFlushWorker(threading.Thread):
         try:
             self.flush_all()
         except Exception as e:
-            print(f"[IOFlushWorker] Exception during final flush: {e}")
+            logger.error(f"[IOFlushWorker] Exception during final flush: {e}")
 
     def flush_all(self):
         for key in list(self.buffer.keys()):
@@ -510,7 +515,7 @@ class IOFlushWorker(threading.Thread):
                 self.mark_range_completed(output_type, layer, head, offset, len(arr))
             mmap_handle.flush()
         except Exception as e:
-            print(f"[IOFlushWorker] Exception during flush: {e}")
+            logger.error(f"[IOFlushWorker] Exception during flush: {e}")
             raise e
         finally:
             self.total_buffered -= self.buffered_bytes.get(key, 0)
@@ -520,7 +525,7 @@ class IOFlushWorker(threading.Thread):
     def enqueue(self, output_type, layer, head, offset, array):
         # Check if this range was already completed (crash recovery)
         if self.is_range_completed(output_type, layer, head, offset, len(array)):
-            print(
+            logger.debug(
                 f"[IOFlushWorker] Skipping already completed range: {output_type}, {layer}, {head}, {offset}-{offset+len(array)}"
             )
             return
@@ -539,7 +544,9 @@ class IOFlushWorker(threading.Thread):
                     self.write_q.put((key, offset, array), timeout=1)
                     break
                 except queue.Full:
-                    print("[IOFlushWorker] Write queue full, waiting to enqueue...")
+                    logger.warning(
+                        "[IOFlushWorker] Write queue full, waiting to enqueue..."
+                    )
                     time.sleep(0.1)
         finally:
             with self.lock:
@@ -555,7 +562,7 @@ class IOFlushWorker(threading.Thread):
             max_wait_time: Maximum time to wait for pending operations (seconds)
             force_shutdown: If True, force shutdown after max_wait_time even if work remains
         """
-        print(f"[IOFlushWorker] Initiating shutdown...")
+        logger.info(f"[IOFlushWorker] Initiating shutdown...")
 
         # Signal that we're shutting down
         self.shutdown_flag.set()
@@ -563,7 +570,7 @@ class IOFlushWorker(threading.Thread):
         # For terabyte operations, we can't wait indefinitely
         # Instead, we save our progress and allow graceful shutdown
         if max_wait_time > 0:
-            print(
+            logger.info(
                 f"[IOFlushWorker] Waiting up to {max_wait_time}s for pending operations..."
             )
             completed = self.done_enqueuing.wait(timeout=max_wait_time)
@@ -572,19 +579,19 @@ class IOFlushWorker(threading.Thread):
                 with self.lock:
                     remaining = self.outstanding_enqueues
                     buffered_mb = self.total_buffered / (1024 * 1024)
-                print(
+                logger.warning(
                     f"[IOFlushWorker] Timeout with {remaining} enqueues and {buffered_mb:.1f}MB buffered"
                 )
 
                 if not force_shutdown:
-                    print(
+                    logger.info(
                         "[IOFlushWorker] Continuing to wait since force_shutdown=False..."
                     )
                     self.done_enqueuing.wait()  # Wait indefinitely
                 else:
-                    print("[IOFlushWorker] Proceeding with forced shutdown")
+                    logger.warning("[IOFlushWorker] Proceeding with forced shutdown")
         else:
-            print("[IOFlushWorker] Skipping wait for pending operations")
+            logger.info("[IOFlushWorker] Skipping wait for pending operations")
 
         # Save final checkpoint before shutdown
         if self.global_dispatcher:
@@ -596,7 +603,7 @@ class IOFlushWorker(threading.Thread):
                 self.write_q.put(None, timeout=1)
                 break
             except queue.Full:
-                print("Write queue full during shutdown; retrying...")
+                logger.warning("Write queue full during shutdown; retrying...")
                 time.sleep(0.1)
 
         # Wait for the worker thread to finish
@@ -609,14 +616,16 @@ class IOFlushWorker(threading.Thread):
                 if self.global_dispatcher:
                     self.global_dispatcher._save_global_checkpoint()
             except Exception as e:
-                print(f"[IOFlushWorker] Exception during final flush in stop(): {e}")
+                logger.error(
+                    f"[IOFlushWorker] Exception during final flush in stop(): {e}"
+                )
 
             # Report final status
             remaining_in_queue = self.write_q.qsize()
             pending_buffered = sum(len(buf) for buf in self.buffer.values())
 
             if remaining_in_queue > 1 or pending_buffered > 0:
-                print(
+                logger.warning(
                     f"[IOFlushWorker] Final status: {remaining_in_queue} in queue, {pending_buffered} buffered"
                 )
                 if self.global_dispatcher:
@@ -624,13 +633,13 @@ class IOFlushWorker(threading.Thread):
                         len(ranges)
                         for ranges in self.global_dispatcher.global_completed_ranges.values()
                     )
-                    print(
+                    logger.info(
                         f"[IOFlushWorker] Progress saved to global checkpoint: {len(self.global_dispatcher.global_completed_ranges)} keys, {total_ranges} ranges"
                     )
             else:
-                print("[IOFlushWorker] Clean shutdown - all data written")
+                logger.info("[IOFlushWorker] Clean shutdown - all data written")
 
-        print("[IOFlushWorker] Shutdown complete")
+        logger.info("[IOFlushWorker] Shutdown complete")
 
 
 class MultiIODispatcher:
@@ -665,7 +674,7 @@ class MultiIODispatcher:
         )
 
         if num_heavy_keys == 0:
-            print(
+            logger.warning(
                 f"[MultiIODispatcher] WARNING: No keys found for heavy_output_type '{self.heavy_output_type}'. Reassigning all workers to light workload."
             )
             self.num_heavy_workers = 0
@@ -692,7 +701,7 @@ class MultiIODispatcher:
             sharded_registries[shard_id][key] = mmap
 
         for i, reg in enumerate(sharded_registries):
-            print(f"[MultiIODispatcher] Worker {i} assigned {len(reg)} keys")
+            logger.info(f"[MultiIODispatcher] Worker {i} assigned {len(reg)} keys")
 
         for i in range(num_workers):
             worker = IOFlushWorker(
@@ -735,11 +744,11 @@ class MultiIODispatcher:
             max_wait_time: Maximum time to wait for each worker
             force_shutdown: If True, force shutdown after timeout
         """
-        print(f"[MultiIODispatcher] Stopping {len(self.workers)} workers...")
+        logger.info(f"[MultiIODispatcher] Stopping {len(self.workers)} workers...")
         for i, worker in enumerate(self.workers):
-            print(f"[MultiIODispatcher] Stopping worker {i}...")
+            logger.info(f"[MultiIODispatcher] Stopping worker {i}...")
             worker.stop(max_wait_time=max_wait_time, force_shutdown=force_shutdown)
-        print("[MultiIODispatcher] All workers stopped")
+        logger.info("[MultiIODispatcher] All workers stopped")
 
     def get_resume_info(self):
         """Get information about what can be resumed after a crash"""
@@ -794,21 +803,23 @@ class MultiIODispatcher:
                 total_ranges = sum(
                     len(ranges) for ranges in self.global_completed_ranges.values()
                 )
-                print(
+                logger.info(
                     f"[MultiIODispatcher] Loaded global checkpoint: {len(self.global_completed_ranges)} keys, {total_ranges} ranges"
                 )
 
                 # Print summary of what was already completed
                 if total_ranges > 0:
-                    print("[MultiIODispatcher] Resume info:")
+                    logger.info("[MultiIODispatcher] Resume info:")
                     for key, ranges in self.global_completed_ranges.items():
                         total_bytes = sum(end - start for start, end in ranges)
-                        print(
+                        logger.info(
                             f"  {key}: {len(ranges)} ranges, {total_bytes / (1024*1024):.1f}MB"
                         )
 
             except Exception as e:
-                print(f"[MultiIODispatcher] Failed to load global checkpoint: {e}")
+                logger.error(
+                    f"[MultiIODispatcher] Failed to load global checkpoint: {e}"
+                )
                 # Reset to empty state on error
                 self.global_completed_ranges = {}
 
@@ -839,12 +850,14 @@ class MultiIODispatcher:
                 total_ranges = sum(
                     len(ranges) for ranges in self.global_completed_ranges.values()
                 )
-                print(
+                logger.info(
                     f"[MultiIODispatcher] Saved global checkpoint: {len(self.global_completed_ranges)} keys, {total_ranges} ranges"
                 )
 
             except Exception as e:
-                print(f"[MultiIODispatcher] Failed to save global checkpoint: {e}")
+                logger.error(
+                    f"[MultiIODispatcher] Failed to save global checkpoint: {e}"
+                )
 
     def is_range_completed_global(self, output_type, layer, head, offset, length):
         """Check if a range is completed in the global checkpoint (worker-agnostic)"""

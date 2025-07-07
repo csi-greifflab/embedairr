@@ -1,3 +1,4 @@
+import logging
 import os
 import torch
 import embedairr.utils
@@ -12,29 +13,33 @@ from transformers.models.roformer.modeling_roformer import (
 # Set max_split_size_mb
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
 
+logger = logging.getLogger("embedairr.embedders.huggingface_embedder")
+
 
 class HuggingfaceEmbedder(BaseEmbedder):
     def __init__(self, args):
         super().__init__(args)
         if self.return_logits:
-            print("Warning: Logits are not supported for this model. Setting to False.")
+            logger.warning(
+                "Warning: Logits are not supported for this model. Setting to False."
+            )
             self.return_logits = False
             self.output_types.remove("logits")
 
     def _load_layers(self, layers):
         """Check if the specified representation layers are valid."""
         if not layers:
-            layers = list(range(1, self.model.config.num_hidden_layers + 1))
+            layers = list(range(1, self.model.config.num_hidden_layers + 1))  # type: ignore
             return layers
         assert all(
-            -(self.model.config.num_hidden_layers + 1)
+            -(self.model.config.num_hidden_layers + 1)  # type: ignore
             <= i
-            <= self.model.config.num_hidden_layers
+            <= self.model.config.num_hidden_layers  # type: ignore
             for i in layers
         )
         layers = [
-            (i + self.model.config.num_hidden_layers + 1)
-            % (self.model.config.num_hidden_layers + 1)
+            (i + self.model.config.num_hidden_layers + 1)  # type: ignore
+            % (self.model.config.num_hidden_layers + 1)  # type: ignore
             for i in layers
         ]
         return layers
@@ -46,11 +51,11 @@ class HuggingfaceEmbedder(BaseEmbedder):
             sequences,
             cdr3_dict,
             self.context,
-            self.tokenizer,
+            self.tokenizer,  # type: ignore
             self.max_length,
             add_special_tokens=not self.disable_special_tokens,
         )
-        print("Batching sequences...")
+        logger.info("Batching sequences...")
         batch_sampler = embedairr.utils.TokenBudgetBatchSampler(
             dataset=dataset, token_budget=self.batch_size
         )
@@ -58,7 +63,7 @@ class HuggingfaceEmbedder(BaseEmbedder):
             dataset, batch_sampler=batch_sampler, collate_fn=dataset.safe_collate
         )
         max_length = dataset.get_max_encoded_length()
-        print("Finished tokenizing and batching sequences")
+        logger.info("Finished tokenizing and batching sequences")
 
         return data_loader, max_length
 
@@ -79,8 +84,8 @@ class HuggingfaceEmbedder(BaseEmbedder):
         )
         if return_contacts:
             attention_matrices = (
-                torch.stack(outputs.attentions)
-                .to(self._precision_to_dtype(self.precision, "torch"))
+                torch.stack(outputs.attentions)  # type: ignore
+                .to(self._precision_to_dtype(self.precision, "torch"))  # type: ignore
                 .cpu()
             )  # stack attention matrices across layers
             torch.cuda.empty_cache()
@@ -93,7 +98,7 @@ class HuggingfaceEmbedder(BaseEmbedder):
                     self._precision_to_dtype(self.precision, "torch"),
                 )
                 .cpu()
-                for layer in self.layers
+                for layer in self.layers  # type: ignore
             }
             torch.cuda.empty_cache()
         else:
@@ -132,12 +137,12 @@ class Antiberta2Embedder(HuggingfaceEmbedder):
         """Initialize the model, tokenizer, and device."""
         if torch.cuda.is_available():
             device = torch.device("cuda")
-            print("Transferred model to GPU")
+            logger.info("Transferred model to GPU")
         else:
             device = torch.device("cpu")
-            print("No GPU available, using CPU")
+            logger.info("No GPU available, using CPU")
         tokenizer = RoFormerTokenizer.from_pretrained(model_link, use_fast=True)
-        model = RoFormerModel.from_pretrained(model_link).to(device)
+        model = RoFormerModel.from_pretrained(model_link).to(device)  # type: ignore
         model.eval()
         num_heads = model.config.num_attention_heads
         num_layers = model.config.num_hidden_layers
@@ -148,7 +153,7 @@ class Antiberta2Embedder(HuggingfaceEmbedder):
 class T5Embedder(HuggingfaceEmbedder):
     def __init__(self, args):
         super().__init__(args)
-        self.sequences = self.fasta_to_dict(args.fasta_path)
+        self.sequences = self.fasta_to_dict(args.fasta_path)  # type: ignore
         self.num_sequences = len(self.sequences)
         (
             self.model,
@@ -180,14 +185,14 @@ class T5Embedder(HuggingfaceEmbedder):
     def _initialize_model(self, model_link="Rostlab/prot_t5_xl_half_uniref50-enc"):
         """Initialize the model, tokenizer, and device."""
 
-        if torch.cuda.is_available():
+        if torch.cuda.is_available() and self.device == "cuda":
             device = torch.device("cuda")
-            print("Transferred model to GPU")
+            logger.info("Transferred model to GPU")
         else:
             device = torch.device("cpu")
-            print("No GPU available, using CPU")
+            logger.info("No GPU available, using CPU")
         tokenizer = T5Tokenizer.from_pretrained(model_link, use_fast=True)
-        model = T5EncoderModel.from_pretrained(model_link).to(device)
+        model = T5EncoderModel.from_pretrained(model_link).to(device)  # type: ignore
         model.eval()
         num_heads = model.config.num_heads
         num_layers = model.config.num_layers

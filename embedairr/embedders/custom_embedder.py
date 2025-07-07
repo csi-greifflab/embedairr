@@ -1,3 +1,4 @@
+import logging
 import torch
 import torch.nn as nn
 import os
@@ -6,6 +7,8 @@ import sys
 import embedairr.utils
 from embedairr.embedders.base_embedder import BaseEmbedder
 from transformers import AutoTokenizer
+
+logger = logging.getLogger("embedairr.embedders.custom_embedder")
 
 
 class CustomEmbedder(BaseEmbedder):
@@ -68,14 +71,14 @@ class CustomEmbedder(BaseEmbedder):
         # Initialize output objects
         self._set_output_objects()
 
-        print(
+        logger.info(
             f"Custom embedder initialized with {self.num_layers} layers, "
             f"{self.num_heads} heads, embedding size {self.embedding_size}"
         )
 
     def _initialize_model(self, model_path, tokenizer_path=None):
         """Initialize the custom model from .pt file or directory."""
-        print(f"Loading custom model from: {model_path}")
+        logger.info(f"Loading custom model from: {model_path}")
 
         # Check if model_path is a directory or a file
         if os.path.isdir(model_path):
@@ -155,9 +158,9 @@ class CustomEmbedder(BaseEmbedder):
         # Move model to appropriate device
         if torch.cuda.is_available() and self.device.type == "cuda":
             model = model.cuda()
-            print("Transferred custom model to GPU")
+            logger.info("Transferred custom model to GPU")
         else:
-            print("Running custom model on CPU")
+            logger.info("Running custom model on CPU")
 
         # Initialize tokenizer
         tokenizer = self._initialize_tokenizer(tokenizer_path, config)
@@ -168,13 +171,13 @@ class CustomEmbedder(BaseEmbedder):
         """Initialize tokenizer for custom model."""
         try:
             tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
-            print(f"Loaded tokenizer from {tokenizer_path}")
+            logger.info(f"Loaded tokenizer from {tokenizer_path}")
             return tokenizer
         except Exception as e:
-            print(f"Could not load tokenizer from directory: {e}")
+            logger.warning(f"Could not load tokenizer from directory: {e}")
 
         # Use a default protein tokenizer if no custom tokenizer found
-        print("Using default protein tokenizer")
+        logger.info("Using default protein tokenizer")
         return DefaultProteinTokenizer()
 
     def _infer_num_layers(self, state_dict):
@@ -306,7 +309,7 @@ class CustomEmbedder(BaseEmbedder):
             add_special_tokens=not self.disable_special_tokens,
         )
 
-        print("Generating batches...")
+        logger.info("Generating batches...")
         batch_sampler = embedairr.utils.TokenBudgetBatchSampler(
             dataset=dataset, token_budget=self.batch_size
         )
@@ -316,7 +319,7 @@ class CustomEmbedder(BaseEmbedder):
         )
 
         max_length = dataset.get_max_encoded_length()
-        print("Data loaded and tokenized")
+        logger.info("Data loaded and tokenized")
 
         return data_loader, max_length
 
@@ -569,7 +572,7 @@ class CustomDataset(embedairr.utils.SequenceDictDataset):
 
         # Handle CDR3 sequences if provided
         if self.cdr3_dict:
-            print("Tokenizing CDR3 sequences...")
+            logger.info("Tokenizing CDR3 sequences...")
             self.encoded_cdr3_data = self._encode_sequences(
                 self.filtered_cdr3_data,
                 tokenizer,

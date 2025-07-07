@@ -10,6 +10,9 @@ from embedairr.utils import MultiIODispatcher, check_disk_free_space
 from alive_progress import alive_bar
 import time
 from pathlib import Path
+import logging
+
+logger = logging.getLogger("embedairr.embedders.base_embedder")
 
 
 class BaseEmbedder:
@@ -325,7 +328,7 @@ class BaseEmbedder:
                 memmap_registry[(output_type, None, None)] = output_array
                 total_bytes += bytes_per_array
 
-        print(f"Preparing to write {total_bytes / 1024**3:.2f} GB to disk.")
+        logger.info(f"Preparing to write {total_bytes / 1024**3:.2f} GB to disk.")
         check_disk_free_space(self.output_path, total_bytes)
         return memmap_registry
 
@@ -355,12 +358,12 @@ class BaseEmbedder:
                 self.return_logits,
             )
         except torch.OutOfMemoryError:
-            print("[GPU memory overflow] Decreasing batch size and retrying...")
+            logger.error("[GPU memory overflow] Decreasing batch size and retrying...")
             torch.cuda.empty_cache()
             B = toks.size(0)
             if B == 1:
                 # can’t split anymore
-                print("OOM on single sample!")
+                logger.error("OOM on single sample!")
                 raise
             # split into two roughly equal chunks
             half = B // 2
@@ -400,7 +403,7 @@ class BaseEmbedder:
             # Check if we're resuming from a checkpoint
             resume_info = self.io_dispatcher.get_resume_info()
             if resume_info:
-                print(f"Resuming from checkpoint: {resume_info}")
+                logger.info(f"Resuming from checkpoint: {resume_info}")
 
         with alive_bar(
             len(self.sequences),  # type: ignore
@@ -438,7 +441,7 @@ class BaseEmbedder:
                 if self.batch_writing:
                     # Apply backpressure if write queue is too full
                     while self.io_dispatcher.queue_fullness() > 0.6:
-                        print(
+                        logger.warning(
                             "[embed] Backpressure: waiting for IOFlushWorker to catch up..."
                         )
                         time.sleep(0.05)
@@ -456,7 +459,7 @@ class BaseEmbedder:
             if self.batch_writing:
                 self.io_dispatcher.stop()
 
-            print("Finished extracting embeddings")
+            logger.info("Finished extracting embeddings")
 
         # After successful completion, clean up the checkpoint file
         if self.batch_writing:
@@ -468,13 +471,13 @@ class BaseEmbedder:
         if os.path.exists(checkpoint_file):
             try:
                 os.remove(checkpoint_file)
-                print(f"Cleaned up checkpoint file: {checkpoint_file}")
+                logger.info(f"Cleaned up checkpoint file: {checkpoint_file}")
             except Exception as e:
-                print(
+                logger.error(
                     f"Warning: Could not remove checkpoint file {checkpoint_file}: {e}"
                 )
         else:
-            print("No checkpoint file found to clean up.")
+            logger.info("No checkpoint file found to clean up.")
 
     def _load_data(self):
         raise NotImplementedError(
@@ -624,7 +627,7 @@ class BaseEmbedder:
                 else:
                     self.embeddings_unpooled["output_data"][layer].extend(tensor)
         else:  # TODO remove padding tokens
-            print("Feature not implemented yet")
+            logger.warning("Feature not implemented yet")
             pass
             for layer in self.layers:  # type: ignore
                 if self.flatten:
@@ -828,7 +831,7 @@ class BaseEmbedder:
 
     def export_to_disk(self):
         for output_type in self.output_types:
-            print(f"Saving {output_type} representations...")
+            logger.info(f"Saving {output_type} representations...")
 
             output_data = getattr(self, output_type)["output_data"]
             output_dir = getattr(self, output_type)["output_dir"]
@@ -841,13 +844,13 @@ class BaseEmbedder:
                         output_type, output_dir, layer
                     )
                     np.save(file_path, tensor)
-                    print(f"Saved {output_type} layer {layer} to {file_path}")
+                    logger.info(f"Saved {output_type} layer {layer} to {file_path}")
 
             elif "average_all" in output_type:
                 tensor = self._prepare_tensor(output_data, self.flatten)
                 file_path = self._make_output_filepath(output_type, output_dir)
                 np.save(file_path, tensor)
-                print(f"Saved {output_type} to {file_path}")
+                logger.info(f"Saved {output_type} to {file_path}")
 
             elif "average_layer" in output_type:
                 for layer in self.layers:  # type: ignore
@@ -856,7 +859,7 @@ class BaseEmbedder:
                         output_type, output_dir, layer
                     )
                     np.save(file_path, tensor)
-                    print(f"Saved {output_type} layer {layer} to {file_path}")
+                    logger.info(f"Saved {output_type} layer {layer} to {file_path}")
 
             elif "all_heads" in output_type:
                 for layer in self.layers:  # type: ignore
@@ -868,7 +871,7 @@ class BaseEmbedder:
                             output_type, output_dir, layer, head
                         )
                         np.save(file_path, tensor)
-                        print(
+                        logger.info(
                             f"Saved {output_type} layer {layer} head {head + 1} to {file_path}"
                         )
 
@@ -879,7 +882,7 @@ class BaseEmbedder:
                         output_type, output_dir, layer
                     )
                     np.save(file_path, tensor)
-                    print(f"Saved {output_type} layer {layer} to {file_path}")
+                    logger.info(f"Saved {output_type} layer {layer} to {file_path}")
 
     def export_sequence_indices(self):
         """Save sequence indices to a CSV file."""
@@ -891,7 +894,7 @@ class BaseEmbedder:
             f.write("index,sequence_id\n")
             for i, label in enumerate(self.sequence_labels):
                 f.write(f"{i},{label}\n")
-        print(f"Saved sequence indices to {output_file_idx}")
+        logger.info(f"Saved sequence indices to {output_file_idx}")
 
     def _create_output_dirs(self):
         for output_type in self.output_types:
@@ -902,16 +905,16 @@ class BaseEmbedder:
     def run(self):
         self._create_output_dirs()
         if self.batch_writing:
-            print("Preallocating disk space...")
+            logger.info("Preallocating disk space...")
             self.memmap_registry = self.preallocate_disk_space()
-            print("Preallocated disk space")
-        print("Created output directories")
+            logger.info("Preallocated disk space")
+        logger.info("Created output directories")
 
-        print("Start embedding extraction")
+        logger.info("Start embedding extraction")
         self.embed()
-        print("Finished embedding extraction")
+        logger.info("Finished embedding extraction")
 
-        print("Saving embeddings...")
+        logger.info("Saving embeddings...")
         if not self.batch_writing:
             self.export_to_disk()
 
@@ -921,4 +924,4 @@ class BaseEmbedder:
         if self.batch_writing:
             self._cleanup_checkpoint()
 
-        print("Pipeline completed successfully!")
+        logger.info("Pipeline completed successfully!")

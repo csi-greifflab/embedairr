@@ -1,7 +1,10 @@
+import logging
 import torch
 from esm import pretrained
 from embedairr.embedders.base_embedder import BaseEmbedder
 import embedairr.utils
+
+logger = logging.getLogger("embedairr.embedders.esm_embedder")
 
 
 class ESMEmbedder(BaseEmbedder):
@@ -32,21 +35,21 @@ class ESMEmbedder(BaseEmbedder):
     def _initialize_model(self, model_name):
         """Initialize the model, tokenizer"""
         #  Loading the pretrained model and alphabet for tokenization
-        print("Loading model...")
+        logger.info("Loading model...")
         # model, alphabet = pretrained.load_model_and_alphabet(model_name)
         model, alphabet = pretrained.load_model_and_alphabet_hub(model_name)
         model.eval()  # Setting the model to evaluation mode
         if not self.disable_special_tokens:
-            model.append_eos = True if not model_name.startswith("esm1") else False
-            model.prepend_bos = True
+            model.append_eos = True if not model_name.startswith("esm1") else False  # type: ignore
+            model.prepend_bos = True  # type: ignore
         else:
-            model.append_eos = False
-            model.prepend_bos = False
+            model.append_eos = False  # type: ignore
+            model.prepend_bos = False  # type: ignore
 
-        num_heads = model.layers[0].self_attn.num_heads
-        num_layers = len(model.layers)
+        num_heads = model.layers[0].self_attn.num_heads  # type: ignore
+        num_layers = len(model.layers)  # type: ignore
         embedding_size = (
-            model.embed_tokens.embedding_dim
+            model.embed_tokens.embedding_dim  # type: ignore
             if model_name.startswith("esm1")
             else model.embed_dim
         )
@@ -54,9 +57,9 @@ class ESMEmbedder(BaseEmbedder):
         # Moving the model to GPU if available for faster processing
         if torch.cuda.is_available():
             model = model.cuda()
-            print("Transferred model to GPU")
+            logger.info("Transferred model to GPU")
         else:
-            print("No GPU available, using CPU")
+            logger.info("No GPU available, using CPU")
         return (
             model,
             alphabet,
@@ -78,14 +81,14 @@ class ESMEmbedder(BaseEmbedder):
 
     def _load_layers(self, layers):
         if not layers:
-            layers = list(range(1, self.model.num_layers + 1))
+            layers = list(range(1, self.model.num_layers + 1))  # type: ignore
             return layers
         # Checking if the specified representation layers are valid
         assert all(
-            -(self.model.num_layers + 1) <= i <= self.model.num_layers for i in layers
+            -(self.model.num_layers + 1) <= i <= self.model.num_layers for i in layers  # type: ignore
         )
         layers = [
-            (i + self.model.num_layers + 1) % (self.model.num_layers + 1)
+            (i + self.model.num_layers + 1) % (self.model.num_layers + 1)  # type: ignore
             for i in layers
         ]
         return layers
@@ -98,17 +101,17 @@ class ESMEmbedder(BaseEmbedder):
             self.context,
             self.alphabet,
             self.max_length,
-            self.prepend_bos,
-            self.append_eos,
+            self.prepend_bos,  # type: ignore
+            self.append_eos,  # type: ignore
         )
         # Generating batch indices based on token count
-        print("Generating batches...")
+        logger.info("Generating batches...")
         batches = embedairr.utils.TokenBudgetBatchSampler(dataset, self.batch_size)
         # DataLoader to iterate through batches efficiently
         data_loader = torch.utils.data.DataLoader(
             dataset, batch_sampler=batches, collate_fn=dataset.safe_collate
         )
-        print("Data loaded")
+        logger.info("Data loaded")
         # Getting the maximum sequence length from the dataset
         max_length = dataset.get_max_encoded_length()
         return data_loader, max_length
