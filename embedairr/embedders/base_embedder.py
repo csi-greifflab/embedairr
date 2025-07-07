@@ -100,47 +100,47 @@ class BaseEmbedder:
         """Initialize output objects."""
         self.sequence_labels = []
         self.logits = {
-            "output_data": {layer: [] for layer in self.layers},
+            "output_data": {layer: [] for layer in self.layers},  # type: ignore
             "method": self._extract_logits,
             "output_dir": os.path.join(self.output_path, "logits"),
             "shape": (
-                self.num_sequences,
+                self.num_sequences,  # type: ignore
                 self.max_length,
             ),
         }
         self.embeddings = {
-            "output_data": {layer: [] for layer in self.layers},
+            "output_data": {layer: [] for layer in self.layers},  # type: ignore
             "method": self._extract_embeddings,
             "output_dir": os.path.join(self.output_path, "embeddings"),
-            "shape": (self.num_sequences, self.embedding_size),
+            "shape": (self.num_sequences, self.embedding_size),  # type: ignore
         }
         self.embeddings_unpooled = {
-            "output_data": {layer: [] for layer in self.layers},
+            "output_data": {layer: [] for layer in self.layers},  # type: ignore
             "method": self._extract_embeddings_unpooled,
             "output_dir": os.path.join(self.output_path, "embeddings_unpooled"),
             "shape": (
                 (
-                    self.num_sequences,
+                    self.num_sequences,  # type: ignore
                     self.max_length,
-                    self.embedding_size,
+                    self.embedding_size,  # type: ignore
                 )
                 if not self.flatten
                 else (
-                    self.num_sequences,
-                    self.max_length * self.embedding_size,
+                    self.num_sequences,  # type: ignore
+                    self.max_length * self.embedding_size,  # type: ignore
                 )
             ),
         }
         self.cdr3_extracted = {
-            "output_data": {layer: [] for layer in self.layers},
+            "output_data": {layer: [] for layer in self.layers},  # type: ignore
             "method": self._extract_cdr3,
             "output_dir": os.path.join(self.output_path, "cdr3_extracted"),
-            "shape": (self.num_sequences, self.embedding_size),
+            "shape": (self.num_sequences, self.embedding_size),  # type: ignore
         }
         self.attention_matrices_all_heads = {
             "output_data": {
-                layer: {head: [] for head in range(self.num_heads)}
-                for layer in self.layers
+                layer: {head: [] for head in range(self.num_heads)}  # type: ignore
+                for layer in self.layers  # type: ignore
             },
             "method": self._extract_attention_matrices_all_heads,
             "output_dir": os.path.join(
@@ -148,32 +148,32 @@ class BaseEmbedder:
             ),
             "shape": (
                 (
-                    self.num_sequences,
+                    self.num_sequences,  # type: ignore
                     self.max_length,
                     self.max_length,
                 )
                 if not self.flatten
                 else (
-                    self.num_sequences,
+                    self.num_sequences,  # type: ignore
                     self.max_length**2,
                 )
             ),
         }
         self.attention_matrices_average_layers = {
-            "output_data": {layer: [] for layer in self.layers},
+            "output_data": {layer: [] for layer in self.layers},  # type: ignore
             "method": self._extract_attention_matrices_average_layer,
             "output_dir": os.path.join(
                 self.output_path, "attention_matrices_average_layers"
             ),
             "shape": (
                 (
-                    self.num_sequences,
+                    self.num_sequences,  # type: ignore
                     self.max_length,
                     self.max_length,
                 )
                 if not self.flatten
                 else (
-                    self.num_sequences,
+                    self.num_sequences,  # type: ignore
                     self.max_length**2,
                 )
             ),
@@ -186,19 +186,19 @@ class BaseEmbedder:
             ),
             "shape": (
                 (
-                    self.num_sequences,
+                    self.num_sequences,  # type: ignore
                     self.max_length,
                     self.max_length,
                 )
                 if not self.flatten
                 else (
-                    self.num_sequences,
+                    self.num_sequences,  # type: ignore
                     self.max_length**2,
                 )
             ),
         }
         self.cdr3_attention_matrices_average_layers = {
-            "output_data": {layer: [] for layer in self.layers},
+            "output_data": {layer: [] for layer in self.layers},  # type: ignore
             "method": self._extract_cdr3_attention_matrices_average_layer,
             "output_dir": os.path.join(
                 self.output_path,
@@ -206,13 +206,13 @@ class BaseEmbedder:
             ),
             "shape": (
                 (
-                    self.num_sequences,
+                    self.num_sequences,  # type: ignore
                     self.max_length,
                     self.max_length,
                 )
                 if not self.flatten
                 else (
-                    self.num_sequences,
+                    self.num_sequences,  # type: ignore
                     self.max_length**2,
                 )
             ),
@@ -225,13 +225,13 @@ class BaseEmbedder:
             ),
             "shape": (
                 (
-                    self.num_sequences,
+                    self.num_sequences,  # type: ignore
                     self.max_length,
                     self.max_length,
                 )
                 if not self.flatten
                 else (
-                    self.num_sequences,
+                    self.num_sequences,  # type: ignore
                     self.max_length**2,
                 )
             ),
@@ -288,17 +288,18 @@ class BaseEmbedder:
             shape = getattr(self, output_type)["shape"]
             output_dir = getattr(self, output_type)["output_dir"]
             np_dtype = self._precision_to_dtype(self.precision, "numpy")
-            bytes_per_array = np.dtype(np_dtype).itemsize * np.prod(shape)
+            bytes_per_array = np.dtype(np_dtype).itemsize * np.prod(shape)  # type: ignore
 
             if isinstance(output_data, dict):
-                for layer in self.layers:
+                for layer in self.layers:  # type: ignore
                     if isinstance(output_data[layer], dict):  # e.g., all_heads
-                        for head in range(self.num_heads):
+                        for head in range(self.num_heads):  # type: ignore
                             file_path = self._make_output_filepath(
                                 output_type, output_dir, layer, head
                             )
+                            mode = "r+" if os.path.exists(file_path) else "w+"
                             output_data[layer][head] = open_memmap(
-                                file_path, mode="w+", dtype=np_dtype, shape=shape
+                                file_path, mode=mode, dtype=np_dtype, shape=shape
                             )
                             memmap_registry[(output_type, layer, head)] = output_data[
                                 layer
@@ -308,15 +309,17 @@ class BaseEmbedder:
                         file_path = self._make_output_filepath(
                             output_type, output_dir, layer
                         )
+                        mode = "r+" if os.path.exists(file_path) else "w+"
                         output_data[layer] = open_memmap(
-                            file_path, mode="w+", dtype=np_dtype, shape=shape
+                            file_path, mode=mode, dtype=np_dtype, shape=shape
                         )
                         memmap_registry[(output_type, layer, None)] = output_data[layer]
                         total_bytes += bytes_per_array
             else:
                 file_path = self._make_output_filepath(output_type, output_dir)
+                mode = "r+" if os.path.exists(file_path) else "w+"
                 output_array = open_memmap(
-                    file_path, mode="w+", dtype=np_dtype, shape=shape
+                    file_path, mode=mode, dtype=np_dtype, shape=shape
                 )
                 setattr(getattr(self, output_type), "output_data", output_array)
                 memmap_registry[(output_type, None, None)] = output_array
@@ -343,8 +346,8 @@ class BaseEmbedder:
         recurse on each half, then concatenate.
         """
         try:
-            return self._compute_outputs(
-                self.model,
+            return self._compute_outputs(  # type: ignore
+                self.model,  # type: ignore
                 toks,
                 attention_mask,
                 self.return_embeddings,
@@ -372,15 +375,15 @@ class BaseEmbedder:
             ]
             # outs is list of (logits, reps, attn)
             logits = (
-                torch.cat([o[0] for o in outs], dim=0) if self.return_logits else None
+                torch.cat([o[0] for o in outs], dim=0) if self.return_logits else None  # type: ignore
             )
             representations = (
-                torch.cat([o[1] for o in outs], dim=0)
+                torch.cat([o[1] for o in outs], dim=0)  # type: ignore
                 if self.return_embeddings
                 else None
             )
             attention_matrices = (
-                torch.cat([o[2] for o in outs], dim=0) if self.return_contacts else None
+                torch.cat([o[2] for o in outs], dim=0) if self.return_contacts else None  # type: ignore
             )
             return logits, representations, attention_matrices
 
@@ -400,7 +403,7 @@ class BaseEmbedder:
                 print(f"Resuming from checkpoint: {resume_info}")
 
         with alive_bar(
-            len(self.sequences),
+            len(self.sequences),  # type: ignore
             title=f"{self.model_name}: Generating embeddings ...",
         ) as bar, torch.no_grad():
             offset = 0
@@ -410,12 +413,12 @@ class BaseEmbedder:
                 toks,
                 attention_mask,
                 cdr3_mask,
-            ) in self.data_loader:
+            ) in self.data_loader:  # type: ignore
                 toks = toks.to(self.device, non_blocking=True)
                 if attention_mask is not None:
                     attention_mask = attention_mask.to(self.device, non_blocking=True)
                 pooling_mask = self._mask_special_tokens(
-                    toks, self.special_tokens
+                    toks, self.special_tokens  # type: ignore
                 ).cpu()  # mask special tokens to avoid diluting signal when pooling embeddings
                 logits, representations, attention_matrices = self._safe_compute(
                     toks, attention_mask
@@ -490,10 +493,10 @@ class BaseEmbedder:
 
     def get_cdr3_positions(self, label, special_tokens, context=0):
         """Get the start and end positions of the CDR3 sequence in the full sequence."""
-        full_sequence = self.sequences[label]
+        full_sequence = self.sequences[label]  # type: ignore
 
         try:
-            cdr3_sequence = self.cdr3_dict[label]
+            cdr3_sequence = self.cdr3_dict[label]  # type: ignore
         except KeyError:
             SystemExit(f"No cdr3 sequence found for {label}")
         # remove '-' from cdr3_sequence
@@ -545,7 +548,7 @@ class BaseEmbedder:
         logits,
         offset,
     ):
-        for layer in self.layers:
+        for layer in self.layers:  # type: ignore
             tensor = logits[layer - 1]
             if self.batch_writing:
                 # output_file = self.logits["output_data"][layer]
@@ -568,7 +571,7 @@ class BaseEmbedder:
         pooling_mask,
         offset,
     ):
-        for layer in self.layers:
+        for layer in self.layers:  # type: ignore
             tensor = torch.stack(
                 [
                     (
@@ -600,7 +603,7 @@ class BaseEmbedder:
         offset,
     ):
         if not self.discard_padding:
-            for layer in self.layers:
+            for layer in self.layers:  # type: ignore
                 tensor = torch.stack(
                     [representations[layer][i] for i in range(len(batch_labels))]
                 )
@@ -623,7 +626,7 @@ class BaseEmbedder:
         else:  # TODO remove padding tokens
             print("Feature not implemented yet")
             pass
-            for layer in self.layers:
+            for layer in self.layers:  # type: ignore
                 if self.flatten:
                     self.embeddings_unpooled["output_data"][layer].extend(
                         [
@@ -642,8 +645,8 @@ class BaseEmbedder:
         batch_labels,
         offset,
     ):
-        for layer in self.layers:
-            for head in range(self.num_heads):
+        for layer in self.layers:  # type: ignore
+            for head in range(self.num_heads):  # type: ignore
                 tensor = torch.stack(
                     [
                         attention_matrices[layer - 1, i, head]
@@ -677,7 +680,7 @@ class BaseEmbedder:
         batch_labels,
         offset,
     ):
-        for layer in self.layers:
+        for layer in self.layers:  # type: ignore
             tensor = torch.stack(
                 [
                     attention_matrices[layer - 1, i].mean(0)
@@ -737,30 +740,32 @@ class BaseEmbedder:
         attention_matrices,
         batch_labels,
     ):
-        for layer in self.layers:
-            for head in range(self.num_heads):
+        for layer in self.layers:  # type: ignore
+            for head in range(self.num_heads):  # type: ignore
                 tensor = []
                 for i, label in enumerate(batch_labels):
-                    start, end = self.get_cdr3_positions(label)
+                    start, end = self.get_cdr3_positions(label)  # type: ignore
                     tensor.extend(
                         attention_matrices[
                             layer - 1, i, head, start:end, start:end
                         ].mean(0)
                     )
                 tensor = torch.stack(tensor)
-                self.cdr3_attention_matrices_all_heads["output_data"][layer][
+                self.cdr3_attention_matrices_all_heads["output_data"][layer][  # type: ignore
                     head
-                ].extend(tensor)
+                ].extend(
+                    tensor
+                )
 
     def _extract_cdr3_attention_matrices_average_layer(
         self,
         attention_matrices,
         batch_labels,
     ):
-        for layer in self.layers:
+        for layer in self.layers:  # type: ignore
             tensor = []
             for i, label in enumerate(batch_labels):
-                start, end = self.get_cdr3_positions(label)
+                start, end = self.get_cdr3_positions(label)  # type: ignore
                 tensor.extend(
                     attention_matrices[layer - 1, i, :, start:end, start:end].mean(0)
                 )
@@ -776,7 +781,7 @@ class BaseEmbedder:
     ):
         tensor = []
         for i, label in enumerate(batch_labels):
-            start, end = self.get_cdr3_positions(label)
+            start, end = self.get_cdr3_positions(label)  # type: ignore
             tensor.extend(
                 attention_matrices[:, i, :, start:end, start:end].mean(dim=(0, 1))
             )
@@ -789,7 +794,7 @@ class BaseEmbedder:
         cdr3_mask,
         offset,
     ):
-        for layer in self.layers:
+        for layer in self.layers:  # type: ignore
             tensor = torch.stack(
                 [
                     (
@@ -830,7 +835,7 @@ class BaseEmbedder:
             flatten = self.flatten and "unpooled" in output_type
 
             if "attention_matrices" not in output_type and "logits" not in output_type:
-                for layer in self.layers:
+                for layer in self.layers:  # type: ignore
                     tensor = self._prepare_tensor(output_data[layer], flatten)
                     file_path = self._make_output_filepath(
                         output_type, output_dir, layer
@@ -845,7 +850,7 @@ class BaseEmbedder:
                 print(f"Saved {output_type} to {file_path}")
 
             elif "average_layer" in output_type:
-                for layer in self.layers:
+                for layer in self.layers:  # type: ignore
                     tensor = self._prepare_tensor(output_data[layer], self.flatten)
                     file_path = self._make_output_filepath(
                         output_type, output_dir, layer
@@ -854,8 +859,8 @@ class BaseEmbedder:
                     print(f"Saved {output_type} layer {layer} to {file_path}")
 
             elif "all_heads" in output_type:
-                for layer in self.layers:
-                    for head in range(self.num_heads):
+                for layer in self.layers:  # type: ignore
+                    for head in range(self.num_heads):  # type: ignore
                         tensor = self._prepare_tensor(
                             output_data[layer][head], self.flatten
                         )
@@ -868,7 +873,7 @@ class BaseEmbedder:
                         )
 
             elif "logits" in output_type:
-                for layer in self.layers:
+                for layer in self.layers:  # type: ignore
                     tensor = self._prepare_tensor(output_data[layer], flatten=False)
                     file_path = self._make_output_filepath(
                         output_type, output_dir, layer
