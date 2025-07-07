@@ -9,6 +9,7 @@ import gc
 from embedairr.utils import MultiIODispatcher, check_disk_free_space
 from alive_progress import alive_bar
 import time
+from pathlib import Path
 
 
 class BaseEmbedder:
@@ -17,7 +18,20 @@ class BaseEmbedder:
         self.fasta_path = args.fasta_path
         self.model_link = args.model_name
         self.disable_special_tokens = args.disable_special_tokens
-        self.model_name = re.sub(r"^.*?/", "", self.model_link)
+        if (
+            self.model_link.endswith(".pt")
+            or self.model_link.endswith(".pth")
+            or self.model_link.startswith("custom:")
+            or (
+                os.path.exists(self.model_link)
+                and (os.path.isfile(self.model_link) or os.path.isdir(self.model_link))
+            )
+        ):
+            self.model_name = Path(
+                self.model_link
+            ).stem  # Use the stem of the model link as the model name
+        else:
+            self.model_name = re.sub(r"^.*?/", "", self.model_link)
         self.output_path = os.path.join(args.output_path, self.model_name)
         # Check if output directory exists and creates it if it's missing
         if not os.path.exists(self.output_path):
@@ -36,7 +50,7 @@ class BaseEmbedder:
         self.cdr3_dict = self._load_cdr3(args.cdr3_path) if args.cdr3_path else None
         self.batch_size = args.batch_size
         self.max_length = args.max_length
-        if torch.cuda.is_available():
+        if torch.cuda.is_available() and args.device == "cuda":
             self.device = torch.device("cuda")
         else:
             self.device = torch.device("cpu")
@@ -60,6 +74,9 @@ class BaseEmbedder:
         self.flush_batches_after = args.flush_batches_after * 1024**2  # in bytes
         self.precision = args.precision
         # self.log_memory = args.log_memory # TODO implement memory logging
+
+        # Set up checkpoint directory for crash recovery
+        self.checkpoint_dir = self.output_path
 
     def _precision_to_dtype(self, precision, framework):
         half_precision = ["float16", "16", "half"]
@@ -369,12 +386,19 @@ class BaseEmbedder:
 
     def embed(self):
         if self.batch_writing:
-            # Start centralized I/O dispatcher
+            # Start centralized I/O dispatcher with checkpoint support
             self.io_dispatcher = MultiIODispatcher(
                 self.memmap_registry,
                 flush_bytes_limit=self.flush_batches_after,
                 heavy_output_type="embeddings_unpooled",
+                checkpoint_dir=self.checkpoint_dir,
             )
+
+            # Check if we're resuming from a checkpoint
+            resume_info = self.io_dispatcher.get_resume_info()
+            if resume_info:
+                print(f"Resuming from checkpoint: {resume_info}")
+
         with alive_bar(
             len(self.sequences),
             title=f"{self.model_name}: Generating embeddings ...",
@@ -425,9 +449,29 @@ class BaseEmbedder:
 
                 self.sequence_labels.extend(labels)
                 bar(len(toks))
+
             if self.batch_writing:
                 self.io_dispatcher.stop()
+
             print("Finished extracting embeddings")
+
+        # After successful completion, clean up the checkpoint file
+        if self.batch_writing:
+            self._cleanup_checkpoint()
+
+    def _cleanup_checkpoint(self):
+        """Clean up the checkpoint file after successful completion."""
+        checkpoint_file = os.path.join(self.checkpoint_dir, "global_checkpoint.json")
+        if os.path.exists(checkpoint_file):
+            try:
+                os.remove(checkpoint_file)
+                print(f"Cleaned up checkpoint file: {checkpoint_file}")
+            except Exception as e:
+                print(
+                    f"Warning: Could not remove checkpoint file {checkpoint_file}: {e}"
+                )
+        else:
+            print("No checkpoint file found to clean up.")
 
     def _load_data(self):
         raise NotImplementedError(
@@ -867,3 +911,9 @@ class BaseEmbedder:
             self.export_to_disk()
 
         self.export_sequence_indices()
+
+        # Final cleanup of checkpoint file (in case embed() didn't handle it)
+        if self.batch_writing:
+            self._cleanup_checkpoint()
+
+        print("Pipeline completed successfully!")

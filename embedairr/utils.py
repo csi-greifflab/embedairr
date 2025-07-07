@@ -4,6 +4,8 @@ import re
 import torch
 import time
 import gc
+import os
+import json
 from transformers import RoFormerTokenizer
 import threading, queue
 from alive_progress import alive_bar
@@ -60,7 +62,7 @@ class SequenceDictDataset(Dataset):
         """Filter the cdr3_dict to only include sequences that are in the dataset."""
         labels, _ = zip(*self.data)
         filtered_cdr3_dict = {
-            label: self.cdr3_dict[label] for label in labels if label in self.cdr3_dict
+            label: self.cdr3_dict[label] for label in labels if label in self.cdr3_dict  # type: ignore
         }
         assert len(filtered_cdr3_dict) == len(
             self.data
@@ -70,12 +72,12 @@ class SequenceDictDataset(Dataset):
     def _get_subsequence_masks(self):
         """Get the subsequence masks for the CDR3 sequences."""
         # Get the full sequences and CDR3 sequences
-        full_sequence_tokens = [entry[2] for entry in self.encoded_data]
-        cdr3_sequences_tokens = [entry[2] for entry in self.encoded_cdr3_data]
+        full_sequence_tokens = [entry[2] for entry in self.encoded_data]  # type: ignore
+        cdr3_sequences_tokens = [entry[2] for entry in self.encoded_cdr3_data]  # type: ignore
 
         # Create masks for each sequence
         masks = [
-            self._find_subsequence(full_seq, cdr3_seq, self.pad_token_id)
+            self._find_subsequence(full_seq, cdr3_seq, self.pad_token_id)  # type: ignore
             for full_seq, cdr3_seq in zip(full_sequence_tokens, cdr3_sequences_tokens)
         ]
 
@@ -384,7 +386,10 @@ def check_disk_free_space(path, min_free_bytes):
 
 class IOFlushWorker(threading.Thread):
     def __init__(
-        self, memmap_registry, flush_bytes_limit=64 * 1024 * 1024
+        self,
+        memmap_registry,
+        flush_bytes_limit=64 * 1024 * 1024,
+        global_dispatcher=None,
     ):  # e.g. 64 MB
         super().__init__()
         self.memmap_registry = (
@@ -401,6 +406,34 @@ class IOFlushWorker(threading.Thread):
         self.done_enqueuing = threading.Event()
         # Initially set done_enqueuing since there are no outstanding enqueues
         self.done_enqueuing.set()
+
+        # Global checkpoint system (worker-agnostic)
+        self.global_dispatcher = global_dispatcher
+        self.last_checkpoint_time = time.time()
+        self.checkpoint_interval = 30  # seconds
+
+    def is_range_completed(self, output_type, layer, head, offset, length):
+        """Check if a range is completed using the global checkpoint system"""
+        if self.global_dispatcher:
+            return self.global_dispatcher.is_range_completed_global(
+                output_type, layer, head, offset, length
+            )
+        return False
+
+    def mark_range_completed(self, output_type, layer, head, offset, length):
+        """Mark a range as completed using the global checkpoint system"""
+        if self.global_dispatcher:
+            self.global_dispatcher.mark_range_completed_global(
+                output_type, layer, head, offset, length
+            )
+
+            # Save global checkpoint periodically
+            now = time.time()
+            if now - self.last_checkpoint_time > self.checkpoint_interval:
+                self.global_dispatcher._save_global_checkpoint()
+                self.last_checkpoint_time = now
+
+    # Deprecated: _merge_ranges is no longer used (global checkpoint system in place)
 
     def queue_fullness(self):
         return self.write_q.qsize() / self.write_q.maxsize
@@ -472,6 +505,9 @@ class IOFlushWorker(threading.Thread):
             mmap_handle = self.memmap_registry[key]
             for offset, arr in self.buffer[key]:
                 mmap_handle[offset : offset + len(arr)] = arr
+                # Mark this range as completed for crash recovery
+                output_type, layer, head = key
+                self.mark_range_completed(output_type, layer, head, offset, len(arr))
             mmap_handle.flush()
         except Exception as e:
             print(f"[IOFlushWorker] Exception during flush: {e}")
@@ -482,6 +518,13 @@ class IOFlushWorker(threading.Thread):
             self.buffer[key].clear()
 
     def enqueue(self, output_type, layer, head, offset, array):
+        # Check if this range was already completed (crash recovery)
+        if self.is_range_completed(output_type, layer, head, offset, len(array)):
+            print(
+                f"[IOFlushWorker] Skipping already completed range: {output_type}, {layer}, {head}, {offset}-{offset+len(array)}"
+            )
+            return
+
         with self.lock:
             if self.outstanding_enqueues == 0:
                 # Clear the event since we're about to have outstanding enqueues
@@ -504,14 +547,48 @@ class IOFlushWorker(threading.Thread):
                 if self.outstanding_enqueues == 0:
                     self.done_enqueuing.set()
 
-    def stop(self):
+    def stop(self, max_wait_time=60, force_shutdown=True):
+        """
+        Stop the worker with practical timeouts for terabyte operations.
+
+        Args:
+            max_wait_time: Maximum time to wait for pending operations (seconds)
+            force_shutdown: If True, force shutdown after max_wait_time even if work remains
+        """
+        print(f"[IOFlushWorker] Initiating shutdown...")
+
         # Signal that we're shutting down
         self.shutdown_flag.set()
 
-        # Wait for all outstanding enqueues to complete
-        # This will block until all enqueue operations finish
-        print("[IOFlushWorker] Waiting for all enqueues to complete...")
-        self.done_enqueuing.wait()  # Wait indefinitely for all enqueues to finish
+        # For terabyte operations, we can't wait indefinitely
+        # Instead, we save our progress and allow graceful shutdown
+        if max_wait_time > 0:
+            print(
+                f"[IOFlushWorker] Waiting up to {max_wait_time}s for pending operations..."
+            )
+            completed = self.done_enqueuing.wait(timeout=max_wait_time)
+
+            if not completed:
+                with self.lock:
+                    remaining = self.outstanding_enqueues
+                    buffered_mb = self.total_buffered / (1024 * 1024)
+                print(
+                    f"[IOFlushWorker] Timeout with {remaining} enqueues and {buffered_mb:.1f}MB buffered"
+                )
+
+                if not force_shutdown:
+                    print(
+                        "[IOFlushWorker] Continuing to wait since force_shutdown=False..."
+                    )
+                    self.done_enqueuing.wait()  # Wait indefinitely
+                else:
+                    print("[IOFlushWorker] Proceeding with forced shutdown")
+        else:
+            print("[IOFlushWorker] Skipping wait for pending operations")
+
+        # Save final checkpoint before shutdown
+        if self.global_dispatcher:
+            self.global_dispatcher._save_global_checkpoint()
 
         # Send sentinel value to stop the worker thread
         while True:
@@ -523,27 +600,35 @@ class IOFlushWorker(threading.Thread):
                 time.sleep(0.1)
 
         # Wait for the worker thread to finish
-        self.join(timeout=30)  # Add timeout to avoid indefinite wait
+        self.join(timeout=30)
 
-        # Force one final flush here too, as backup
+        # Force one final flush and checkpoint
         with self.lock:
             try:
                 self.flush_all()
+                if self.global_dispatcher:
+                    self.global_dispatcher._save_global_checkpoint()
             except Exception as e:
                 print(f"[IOFlushWorker] Exception during final flush in stop(): {e}")
 
-            # Task completion check:
+            # Report final status
             remaining_in_queue = self.write_q.qsize()
-            if remaining_in_queue > 1:  # Allow for the sentinel None value
-                print(
-                    f"[IOFlushWorker] WARNING: Write queue not empty: {remaining_in_queue} remaining"
-                )
-
             pending_buffered = sum(len(buf) for buf in self.buffer.values())
-            if pending_buffered > 0:
+
+            if remaining_in_queue > 1 or pending_buffered > 0:
                 print(
-                    f"[IOFlushWorker] WARNING: Pending buffered writes remaining: {pending_buffered}"
+                    f"[IOFlushWorker] Final status: {remaining_in_queue} in queue, {pending_buffered} buffered"
                 )
+                if self.global_dispatcher:
+                    total_ranges = sum(
+                        len(ranges)
+                        for ranges in self.global_dispatcher.global_completed_ranges.values()
+                    )
+                    print(
+                        f"[IOFlushWorker] Progress saved to global checkpoint: {len(self.global_dispatcher.global_completed_ranges)} keys, {total_ranges} ranges"
+                    )
+            else:
+                print("[IOFlushWorker] Clean shutdown - all data written")
 
         print("[IOFlushWorker] Shutdown complete")
 
@@ -556,9 +641,24 @@ class MultiIODispatcher:
         flush_bytes_limit=64 * 1024 * 1024,
         heavy_output_type="embeddings_unpooled",
         heavy_proportion=0.75,
+        checkpoint_dir=None,
     ):
         self.num_workers = num_workers
         self.heavy_output_type = heavy_output_type
+        self.checkpoint_dir = checkpoint_dir
+
+        # Centralized checkpoint system (worker-agnostic)
+        self.global_checkpoint_file = None
+        self.global_completed_ranges = {}  # Shared across all workers
+        self.checkpoint_lock = threading.Lock()
+
+        if checkpoint_dir:
+            os.makedirs(checkpoint_dir, exist_ok=True)
+            self.global_checkpoint_file = os.path.join(
+                checkpoint_dir, "global_checkpoint.json"
+            )
+            self._load_global_checkpoint()
+
         # Check if heavy keys exist
         num_heavy_keys = sum(
             1 for key in memmap_registry if key[0] == self.heavy_output_type
@@ -598,6 +698,7 @@ class MultiIODispatcher:
             worker = IOFlushWorker(
                 memmap_registry=sharded_registries[i],
                 flush_bytes_limit=flush_bytes_limit,
+                global_dispatcher=self,  # Pass self as the global dispatcher
             )
             worker.start()
             self.workers.append(worker)
@@ -626,6 +727,166 @@ class MultiIODispatcher:
                 output_type, layer, head, offset, array
             )
 
-    def stop(self):
-        for worker in self.workers:
-            worker.stop()
+    def stop(self, max_wait_time=60, force_shutdown=True):
+        """
+        Stop all workers with practical timeouts for terabyte operations.
+
+        Args:
+            max_wait_time: Maximum time to wait for each worker
+            force_shutdown: If True, force shutdown after timeout
+        """
+        print(f"[MultiIODispatcher] Stopping {len(self.workers)} workers...")
+        for i, worker in enumerate(self.workers):
+            print(f"[MultiIODispatcher] Stopping worker {i}...")
+            worker.stop(max_wait_time=max_wait_time, force_shutdown=force_shutdown)
+        print("[MultiIODispatcher] All workers stopped")
+
+    def get_resume_info(self):
+        """Get information about what can be resumed after a crash"""
+        total_completed_ranges = sum(
+            len(ranges) for ranges in self.global_completed_ranges.values()
+        )
+        total_completed_bytes = 0
+
+        resume_info = {
+            "global_checkpoint_file": self.global_checkpoint_file,
+            "total_completed_ranges": total_completed_ranges,
+            "num_workers": len(self.workers),
+            "keys_with_progress": {},
+        }
+
+        # Calculate total bytes and provide per-key breakdown
+        for key, ranges in self.global_completed_ranges.items():
+            key_bytes = sum(end - start for start, end in ranges)
+            total_completed_bytes += key_bytes
+
+            resume_info["keys_with_progress"][f"{key[0]}|{key[1]}|{key[2]}"] = {
+                "ranges": len(ranges),
+                "bytes": key_bytes,
+                "mb": key_bytes / (1024 * 1024),
+            }
+
+        resume_info["total_completed_bytes"] = total_completed_bytes
+        resume_info["total_completed_gb"] = total_completed_bytes / (1024 * 1024 * 1024)
+
+        return resume_info
+
+    def _load_global_checkpoint(self):
+        """Load the global checkpoint that works regardless of worker count"""
+        if self.global_checkpoint_file and os.path.exists(self.global_checkpoint_file):
+            try:
+                with open(self.global_checkpoint_file, "r") as f:
+                    data = json.load(f)
+                    # Convert string keys back to tuples and ranges to sets
+                    for key_str, ranges in data.get("completed_ranges", {}).items():
+                        # Parse key string back to tuple
+                        parts = key_str.split("|")
+                        if len(parts) == 3:
+                            output_type, layer, head = parts
+                            # Convert layer and head back to appropriate types
+                            layer = int(layer) if layer != "None" else None
+                            head = int(head) if head != "None" else None
+                            key = (output_type, layer, head)
+                            self.global_completed_ranges[key] = set(
+                                tuple(r) for r in ranges
+                            )
+
+                total_ranges = sum(
+                    len(ranges) for ranges in self.global_completed_ranges.values()
+                )
+                print(
+                    f"[MultiIODispatcher] Loaded global checkpoint: {len(self.global_completed_ranges)} keys, {total_ranges} ranges"
+                )
+
+                # Print summary of what was already completed
+                if total_ranges > 0:
+                    print("[MultiIODispatcher] Resume info:")
+                    for key, ranges in self.global_completed_ranges.items():
+                        total_bytes = sum(end - start for start, end in ranges)
+                        print(
+                            f"  {key}: {len(ranges)} ranges, {total_bytes / (1024*1024):.1f}MB"
+                        )
+
+            except Exception as e:
+                print(f"[MultiIODispatcher] Failed to load global checkpoint: {e}")
+                # Reset to empty state on error
+                self.global_completed_ranges = {}
+
+    def _save_global_checkpoint(self):
+        """Save the global checkpoint"""
+        if not self.global_checkpoint_file:
+            return
+
+        with self.checkpoint_lock:
+            try:
+                # Convert tuples to strings for JSON serialization
+                data = {
+                    "completed_ranges": {
+                        f"{key[0]}|{key[1]}|{key[2]}": list(ranges)
+                        for key, ranges in self.global_completed_ranges.items()
+                    },
+                    "timestamp": time.time(),
+                    "num_workers_used": self.num_workers,
+                }
+
+                # Write to temporary file first, then rename (atomic operation)
+                temp_file = self.global_checkpoint_file + ".tmp"
+                with open(temp_file, "w") as f:
+                    json.dump(data, f, indent=2)
+
+                os.rename(temp_file, self.global_checkpoint_file)
+
+                total_ranges = sum(
+                    len(ranges) for ranges in self.global_completed_ranges.values()
+                )
+                print(
+                    f"[MultiIODispatcher] Saved global checkpoint: {len(self.global_completed_ranges)} keys, {total_ranges} ranges"
+                )
+
+            except Exception as e:
+                print(f"[MultiIODispatcher] Failed to save global checkpoint: {e}")
+
+    def is_range_completed_global(self, output_type, layer, head, offset, length):
+        """Check if a range is completed in the global checkpoint (worker-agnostic)"""
+        key = (output_type, layer, head)
+        if key not in self.global_completed_ranges:
+            return False
+
+        end_offset = offset + length
+        completed_set = self.global_completed_ranges[key]
+
+        # Check if this range is fully covered by any completed range
+        for start, end in completed_set:
+            if start <= offset and end_offset <= end:
+                return True
+        return False
+
+    def mark_range_completed_global(self, output_type, layer, head, offset, length):
+        """Mark a range as completed in the global checkpoint (worker-agnostic)"""
+        key = (output_type, layer, head)
+
+        with self.checkpoint_lock:
+            if key not in self.global_completed_ranges:
+                self.global_completed_ranges[key] = set()
+
+            self.global_completed_ranges[key].add((offset, offset + length))
+
+            # Merge overlapping ranges to keep the set manageable
+            self._merge_ranges_global(key)
+
+    def _merge_ranges_global(self, key):
+        """Merge overlapping ranges in the global checkpoint"""
+        if key not in self.global_completed_ranges:
+            return
+
+        ranges = sorted(self.global_completed_ranges[key])
+        merged = []
+
+        for start, end in ranges:
+            if merged and start <= merged[-1][1]:
+                # Overlapping ranges - merge them
+                merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+            else:
+                merged.append((start, end))
+
+        self.global_completed_ranges[key] = set(merged)

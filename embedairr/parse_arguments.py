@@ -45,8 +45,7 @@ def parse_arguments():
         "--model_name",
         type=str,
         required=True,
-        choices=supported_models,
-        help="Model name. Example: esm2_t33_650M_UR50D",
+        help="Model name or path to custom model. For custom models, use path to .pt/.pth file or directory containing model files. For predefined models, use model name from supported list.",
     )
     parser.add_argument(
         "--fasta_path",
@@ -180,6 +179,19 @@ def parse_arguments():
         default="32",
         choices=["float16", "16", "half", "float32", "32", "full"],
         help="Precision of the output data. Inference during embedding is not affected. Default is 'float32'.",
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="cuda",
+        choices=["cuda", "cpu"],
+        help="Device to run the model on. Default is 'cuda'.",
+    )
+    parser.add_argument(
+        "--tokenizer_from",
+        type=str,
+        default=None,
+        help="Name of the tokenizer to use. If not provided, will use the tokenizer from the model. If using a custom model, provide the path to the tokenizer directory.",
     )
 
     args = parser.parse_args()

@@ -1,0 +1,10 @@
+{
+  "tokenizer_class": "BertTokenizer",
+  "model_max_length": 512,
+  "do_lower_case": false,
+  "cls_token": "<cls>",
+  "sep_token": "<sep>",
+  "pad_token": "<pad>",
+  "unk_token": "<unk>",
+  "model_type": "protein_transformer"
+}

@@ -54,11 +54,22 @@ EmbedAIRR is a tool for extracting embeddings and attention matrices from protei
     - RoFormer models (tested)
         - AntiBERTa2-CSSP
         - AntiBERTa2
+    - Custom Hugging Face models
+        - Any compatible model from Hugging Face Hub: `username/model-name`
+        - Private models with authentication
+        - Local Hugging Face models
+- Custom Models
+    - Load your own PyTorch models with custom tokenizers
+    - Create example with: `python create_example_custom_model.py`
 
 
 ## Arguments
 - --experiment_name (str, optional): Prefix for names of output files. If not provided, name of input file will be used for prefix.
-- --model_name (str, required): Name of model or link to model. Choose from 'List of supported models'. Example: esm2_t33_650M_UR50D.
+- --model_name (str, required): Name of model or link to model. Choose from 'List of supported models' or use custom models:
+  - ESM models: esm2_t33_650M_UR50D
+  - Hugging Face models: username/model-name
+  - Custom PyTorch models: /path/to/model.pt or /path/to/model_directory/
+  - Local HF models: ./local_hf_model
 - --fasta_path (str, required): "Path to the input FASTA file. If no experiment name is provided, the output files will be named after the input file.",
 - --output_path (str, required): Directory for output files. Will generate a subdirectory for outputs of each output type.
 - --cdr3_path (str, optional): Path to the CDR3 CSV file. Only required when calculating CDR3 sequence embeddings.
