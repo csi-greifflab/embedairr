@@ -135,7 +135,7 @@ class Antiberta2Embedder(HuggingfaceEmbedder):
 
     def _initialize_model(self, model_link="alchemab/antiberta2-cssp"):
         """Initialize the model, tokenizer, and device."""
-        if torch.cuda.is_available():
+        if torch.cuda.is_available() and self.device == "cuda":
             device = torch.device("cuda")
             logger.info("Transferred model to GPU")
         else:
