@@ -61,14 +61,14 @@ def parse_arguments():
     )
     parser.add_argument(
         "--output_path",
-        type=str.lower,
+        type=str,
         required=True,
         help="Directory for output files \n Will generate a subdirectory for outputs of each output_type.\n Will output multiple files if multiple layers are specified with '--layers'. Output file is a single tensor or a list of tensors when --pooling is False.",
     )
     parser.add_argument(
         "--substring_path",
         default=None,
-        type=str.lower,
+        type=str,
         help=" Path to a CSV file with columns 'sequence_id' and 'substring'. Only required when selecting 'substring' embedding option.",
     )
     parser.add_argument(
@@ -157,7 +157,7 @@ def parse_arguments():
     )
     parser.add_argument(
         "--device",
-        type=str,
+        type=str.lower,
         default="cuda",
         choices=["cuda", "cpu"],
         help="Device to run the model on. Default is 'cuda'.",

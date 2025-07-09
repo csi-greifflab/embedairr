@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 pepe \
     --experiment_name "test" \
     --model_name "/home/jahn/embedairr/examples/custom_model/example_protein_model" \

@@ -479,7 +479,6 @@ class BaseEmbedder:
         Create a boolean mask for special tokens in the input tensor.
 
         """
-        special_tokens = None
         if (
             special_tokens is not None
         ):  # Create a boolean mask: True where the value is not in special_tokens.
