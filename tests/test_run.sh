@@ -1,1 +1,0 @@
-embedairr --experiment_name "test" --model_name esm2_t33_650M_UR50D --fasta_path "tests/test_files/test.fasta" --output_path "tests/test_files/test_output" --cdr3_path "tests/test_files/test_cdr3.csv" --extract_embeddings pooled unpooled --extract_cdr3_embeddings pooled --extract_attention_matrices all_heads --batch_writing false

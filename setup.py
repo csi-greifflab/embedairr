@@ -1,9 +1,10 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="embedairr",
+    name="pepe",
     version="0.1",
     packages=find_packages(),
+    package_dir={"": "src"},
     install_requires=[
         "torch",
         "transformers",
@@ -14,5 +15,5 @@ setup(
         "rjieba",
         "alive_progress",
     ],
-    entry_points={"console_scripts": ["embedairr = embedairr.__main__:main"]},
+    entry_points={"console_scripts": ["pepe = pepe.__main__:main"]},
 )
