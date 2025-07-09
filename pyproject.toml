@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pepe-greifflab"
+version = "1.0.0-dev1"
+authors = [
+    {name = "Jahn Zhong", email = "jahn.zhong@medisin.uio.no"},
+]
+description = "Pipeline for Easy Protein Embedding - Extract embeddings and attention matrices from protein sequences"
+readme = "README.md"
+license = {text = "AGPL-3.0"}
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+keywords = ["protein", "embeddings", "bioinformatics", "machine-learning", "nlp", "transformers"]
+dependencies = [
+    "torch>=1.9.0",
+    "transformers>=4.20.0",
+    "fair-esm",
+    "sentencepiece",
+    "numpy",
+    "protobuf",
+    "rjieba",
+    "psutil",
+    "alive_progress",
+]
+
+[project.urls]
+Homepage = "https://github.com/csi-greifflab/pepe-greifflab"  # Replace with your GitHub URL
+"Bug Reports" = "https://github.com/csi-greifflab/pepe-greifflab/issues"
+"Source" = "https://github.com/csi-greifflab/pepe-greifflab"
+"Documentation" = "https://github.com/csi-greifflab/pepe-greifflab#readme"
+
+[project.scripts]
+pepe = "pepe.__main__:main"
+pepe-greifflab = "pepe.__main__:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

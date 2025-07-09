@@ -1,6 +1,8 @@
 import logging
 import sys
 
+__version__ = "1.0.0-dev1"
+
 
 # Configure logging for the embedairr package
 def setup_logging(level=logging.INFO):
