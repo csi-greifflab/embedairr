@@ -43,16 +43,16 @@ class TokenBudgetBatchSampler:
 
 
 class SequenceDictDataset(Dataset):
-    def __init__(self, sequences, cdr3_dict, context):
+    def __init__(self, sequences, substring_dict, context):
         self.data = list(sequences.items())  # (label, seq)
-        if cdr3_dict:
-            self.cdr3_dict = cdr3_dict
+        if substring_dict:
+            self.substring_dict = substring_dict
             self.context = context
-            self.filtered_cdr3_data = self._filter_cdr3()
+            self.filtered_substring_data = self._filter_substrings()
         else:
-            self.cdr3_dict = None
+            self.substring_dict = None
             self.context = None
-            self.filtered_cdr3_data = None
+            self.filtered_substring_data = None
         pass
 
     def __getitem__(self, idx):
@@ -61,27 +61,27 @@ class SequenceDictDataset(Dataset):
     def __len__(self):
         return len(self.data)
 
-    def _filter_cdr3(self):
-        """Filter the cdr3_dict to only include sequences that are in the dataset."""
+    def _filter_substrings(self):
+        """Filter the substring_dict to only include sequences that are in the dataset."""
         labels, _ = zip(*self.data)
-        filtered_cdr3_dict = {
-            label: self.cdr3_dict[label] for label in labels if label in self.cdr3_dict  # type: ignore
+        filtered_substring_dict = {
+            label: self.substring_dict[label] for label in labels if label in self.substring_dict  # type: ignore
         }
-        assert len(filtered_cdr3_dict) == len(
+        assert len(filtered_substring_dict) == len(
             self.data
-        ), "Not all sequences have matching CDR3 sequences."
-        return filtered_cdr3_dict.items()
+        ), "Not all sequences have matching substrings."
+        return filtered_substring_dict.items()
 
-    def _get_subsequence_masks(self):
-        """Get the subsequence masks for the CDR3 sequences."""
-        # Get the full sequences and CDR3 sequences
+    def _get_substring_masks(self):
+        """Mask tokens from sequence that are not in the provided substring."""
+        # Get the full sequences and substring
         full_sequence_tokens = [entry[2] for entry in self.encoded_data]  # type: ignore
-        cdr3_sequences_tokens = [entry[2] for entry in self.encoded_cdr3_data]  # type: ignore
+        substring_tokens = [entry[2] for entry in self.encoded_substring_data]  # type: ignore
 
         # Create masks for each sequence
         masks = [
-            self._find_subsequence(full_seq, cdr3_seq, self.pad_token_id)  # type: ignore
-            for full_seq, cdr3_seq in zip(full_sequence_tokens, cdr3_sequences_tokens)
+            self._find_subsequence(full_seq, substring, self.pad_token_id)  # type: ignore
+            for full_seq, substring in zip(full_sequence_tokens, substring_tokens)
         ]
 
         return list(masks)
@@ -126,26 +126,26 @@ class HuggingFaceDataset(SequenceDictDataset):
     def __init__(
         self,
         sequences,
-        cdr3_dict,
+        substring_dict,
         context,
         tokenizer,
         max_length,
         add_special_tokens=True,
     ):
-        super().__init__(sequences, cdr3_dict, context)
+        super().__init__(sequences, substring_dict, context)
         self.encoded_data = self._encode_sequences(
             self.data, tokenizer, max_length, add_special_tokens
         )  # (label, seq, toks, attention_mask)
         self.pad_token_id = tokenizer.pad_token_type_id
-        if self.cdr3_dict:
-            logger.info("Tokenizing CDR3 sequences...")
-            self.encoded_cdr3_data = self._encode_sequences(
-                self.filtered_cdr3_data,
+        if self.substring_dict:
+            logger.info("Tokenizing substrings...")
+            self.encoded_substring_data = self._encode_sequences(
+                self.filtered_substring_data,
                 tokenizer,
                 "max_length",
                 add_special_tokens=False,
             )  # (label, seq, toks, attention_mask)
-            self.cdr3_masks = self._get_subsequence_masks()
+            self.substring_masks = self._get_substring_masks()
 
     def _encode_sequences(self, data, tokenizer, max_length, add_special_tokens):
         labels, strs = zip(*data)
@@ -197,21 +197,21 @@ class HuggingFaceDataset(SequenceDictDataset):
 
     def __getitem__(self, idx):
         labels, seqs, toks, attention_masks = self.encoded_data[idx]
-        if self.cdr3_dict:
-            cdr3_masks = self.cdr3_masks[idx]
-            return labels, seqs, toks, attention_masks, cdr3_masks
+        if self.substring_dict:
+            substring_masks = self.substring_masks[idx]
+            return labels, seqs, toks, attention_masks, substring_masks
         else:
             return labels, seqs, toks, attention_masks, None
 
     def safe_collate(self, batch):
-        if self.cdr3_dict:
-            labels, seqs, toks, attention_matrices, cdr3_masks = zip(*batch)
+        if self.substring_dict:
+            labels, seqs, toks, attention_matrices, substring_masks = zip(*batch)
             return (
                 list(labels),
                 list(seqs),
                 torch.stack(toks),
                 torch.stack(attention_matrices),
-                torch.stack(cdr3_masks),
+                torch.stack(substring_masks),
             )
         else:
             labels, seqs, toks, attention_matrices, _ = zip(*batch)
@@ -231,14 +231,14 @@ class ESMDataset(SequenceDictDataset):
     def __init__(
         self,
         sequences,
-        cdr3_dict,
+        substring_dict,
         context,
         alphabet,
         max_length,
         prepend_bos=True,
         append_eos=True,
     ):
-        super().__init__(sequences, cdr3_dict, context)
+        super().__init__(sequences, substring_dict, context)
         self.encoded_data = self._encode_sequences(
             self.data,
             alphabet,
@@ -247,17 +247,17 @@ class ESMDataset(SequenceDictDataset):
             append_eos=append_eos,
         )  # (label, seq, toks)
         self.pad_token_id = alphabet.padding_idx
-        if self.cdr3_dict:
-            logger.info("Tokenizing CDR3 sequences...")
-            self.encoded_cdr3_data = self._encode_sequences(
-                self.filtered_cdr3_data,
+        if self.substring_dict:
+            logger.info("Tokenizing substrings...")
+            self.encoded_substring_data = self._encode_sequences(
+                self.filtered_substring_data,
                 alphabet,
                 "max_length",
                 prepend_bos=False,
                 append_eos=False,
             )  # (label, seq, toks)
-            logger.info("Matching CDR3 sequences to full sequences...")
-            self.cdr3_masks = self._get_subsequence_masks()
+            logger.info("Matching substrings to full sequences...")
+            self.substring_masks = self._get_substring_masks()
 
     def _encode_sequences(
         self, data, alphabet, max_length, prepend_bos=True, append_eos=True
@@ -298,14 +298,14 @@ class ESMDataset(SequenceDictDataset):
         return max(len(toks) for _, _, toks in self.encoded_data)
 
     def safe_collate(self, batch):
-        if self.cdr3_dict:
-            labels, seqs, toks, _, cdr3_masks = zip(*batch)
+        if self.substring_dict:
+            labels, seqs, toks, _, substring_masks = zip(*batch)
             return (
                 list(labels),
                 list(seqs),
                 torch.stack(toks),
                 None,
-                torch.stack(cdr3_masks),
+                torch.stack(substring_masks),
             )
         else:
             labels, seqs, toks, _, _ = zip(*batch)
@@ -313,9 +313,9 @@ class ESMDataset(SequenceDictDataset):
 
     def __getitem__(self, idx):
         labels, seqs, toks = self.encoded_data[idx]
-        if self.cdr3_dict:
-            cdr3_masks = self.cdr3_masks[idx]
-            return labels, seqs, toks, None, cdr3_masks
+        if self.substring_dict:
+            substring_masks = self.substring_masks[idx]
+            return labels, seqs, toks, None, substring_masks
         else:
             return labels, seqs, toks, None, None
 

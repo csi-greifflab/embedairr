@@ -17,7 +17,6 @@ logger = logging.getLogger("src.embedders.base_embedder")
 
 class BaseEmbedder:
     def __init__(self, args):
-        self.ram_limit = args.ram_limit
         self.fasta_path = args.fasta_path
         self.model_link = args.model_name
         self.disable_special_tokens = args.disable_special_tokens
@@ -50,8 +49,8 @@ class BaseEmbedder:
         self.layers = (
             [j for i in args.layers for j in i] if args.layers != [None] else None
         )
-        self.cdr3_dict = (
-            self._load_cdr3(args.substring_path) if args.substring_path else None
+        self.substring_dict = (
+            self._load_substrings(args.substring_path) if args.substring_path else None
         )
         self.batch_size = args.batch_size
         self.max_length = args.max_length
@@ -59,7 +58,7 @@ class BaseEmbedder:
             self.device = torch.device("cuda")
         else:
             self.device = torch.device("cpu")
-        self.output_types = self._get_output_types(args)
+        self.output_types = args.extract_embeddings
         self.discard_padding = args.discard_padding
         self.flatten = args.flatten
         self.return_embeddings = False
@@ -72,7 +71,7 @@ class BaseEmbedder:
                 self.return_contacts = True
             if output_type == "logits":
                 self.return_logits = True
-        self.streaming_output = args.batch_writing
+        self.streaming_output = args.streaming_output
         self.num_workers = args.num_workers if self.streaming_output else 1
         self.max_in_flight = self.num_workers * 2
         self.flush_batches_after = args.flush_batches_after * 1024**2  # in bytes
@@ -112,15 +111,15 @@ class BaseEmbedder:
                 self.max_length,
             ),
         }
-        self.embeddings = {
+        self.mean_pooled = {
             "output_data": {layer: [] for layer in self.layers},  # type: ignore
-            "method": self._extract_embeddings,
+            "method": self._extract_mean_pooled,
             "output_dir": os.path.join(self.output_path, "mean_pooled"),
             "shape": (self.num_sequences, self.embedding_size),  # type: ignore
         }
-        self.embeddings_unpooled = {
+        self.per_token = {
             "output_data": {layer: [] for layer in self.layers},  # type: ignore
-            "method": self._extract_embeddings_unpooled,
+            "method": self._extract_per_token,
             "output_dir": os.path.join(self.output_path, "per_token"),
             "shape": (
                 (
@@ -135,18 +134,18 @@ class BaseEmbedder:
                 )
             ),
         }
-        self.cdr3_extracted = {
+        self.substring_pooled = {
             "output_data": {layer: [] for layer in self.layers},  # type: ignore
-            "method": self._extract_cdr3,
+            "method": self._extract_substring_pooled,
             "output_dir": os.path.join(self.output_path, "substring_pooled"),
             "shape": (self.num_sequences, self.embedding_size),  # type: ignore
         }
-        self.attention_matrices_all_heads = {
+        self.attention_head = {
             "output_data": {
                 layer: {head: [] for head in range(self.num_heads)}  # type: ignore
                 for layer in self.layers  # type: ignore
             },
-            "method": self._extract_attention_matrices_all_heads,
+            "method": self._extract_attention_head,
             "output_dir": os.path.join(self.output_path, "attention_head"),
             "shape": (
                 (
@@ -161,9 +160,9 @@ class BaseEmbedder:
                 )
             ),
         }
-        self.attention_matrices_average_layers = {
+        self.attention_layer = {
             "output_data": {layer: [] for layer in self.layers},  # type: ignore
-            "method": self._extract_attention_matrices_average_layer,
+            "method": self._extract_attention_layer,
             "output_dir": os.path.join(self.output_path, "attention_layer"),
             "shape": (
                 (
@@ -178,9 +177,9 @@ class BaseEmbedder:
                 )
             ),
         }
-        self.attention_matrices_average_all = {
+        self.attention_model = {
             "output_data": [],
-            "method": self._extract_attention_matrices_average_all,
+            "method": self._extract_attention_model,
             "output_dir": os.path.join(self.output_path, "attention_model"),
             "shape": (
                 (
@@ -201,12 +200,12 @@ class BaseEmbedder:
         output_types = []
 
         options_mapping = {
-            "per_token": "embeddings_unpooled",
-            "mean_pooled": "embeddings",
-            "substring_pooled": "cdr3_extracted",
-            "attention_head": "attention_matrices_all_heads",
-            "attention_layer": "attention_matrices_average_layers",
-            "attention_model": "attention_matrices_average_all",
+            "per_token": "per_token",
+            "mean_pooled": "mean_pooled",
+            "substring_pooled": "substring_pooled",
+            "attention_head": "attention_head",
+            "attention_layer": "attention_layer",
+            "attention_model": "attention_model",
             "logits": "logits",
         }
 
@@ -275,14 +274,14 @@ class BaseEmbedder:
         check_disk_free_space(self.output_path, total_bytes)
         return memmap_registry
 
-    def _load_cdr3(self, substring_path):
-        """Load CDR3 sequences and store in a dictionary."""
+    def _load_substrings(self, substring_path):
+        """Load substrings and store in a dictionary."""
         if substring_path:
             with open(substring_path) as f:
                 reader = csv.reader(f)  # skip header
                 next(reader)
-                cdr3_dict = {rows[0]: rows[1] for rows in reader}
-            return cdr3_dict
+                substring_dict = {rows[0]: rows[1] for rows in reader}
+            return substring_dict
         else:
             return None
 
@@ -339,7 +338,7 @@ class BaseEmbedder:
             self.io_dispatcher = MultiIODispatcher(
                 self.memmap_registry,
                 flush_bytes_limit=self.flush_batches_after,
-                heavy_output_type="embeddings_unpooled",
+                heavy_output_type="per_token",
                 checkpoint_dir=self.checkpoint_dir,
             )
 
@@ -358,7 +357,7 @@ class BaseEmbedder:
                 strs,
                 toks,
                 attention_mask,
-                cdr3_mask,
+                substring_mask,
             ) in self.data_loader:  # type: ignore
                 toks = toks.to(self.device, non_blocking=True)
                 if attention_mask is not None:
@@ -377,7 +376,7 @@ class BaseEmbedder:
                     "representations": representations,
                     "batch_labels": labels,
                     "pooling_mask": pooling_mask,
-                    "cdr3_mask": cdr3_mask,
+                    "substring_mask": substring_mask,
                     "offset": offset,
                     "special_tokens": not self.disable_special_tokens,
                 }
@@ -437,23 +436,23 @@ class BaseEmbedder:
             "This method should be implemented in the child class"
         )
 
-    def get_cdr3_positions(self, label, special_tokens, context=0):
-        """Get the start and end positions of the CDR3 sequence in the full sequence."""
+    def get_substring_positions(self, label, special_tokens, context=0):
+        """Get the start and end positions of the substring in the full sequence."""
         full_sequence = self.sequences[label]  # type: ignore
 
         try:
-            cdr3_sequence = self.cdr3_dict[label]  # type: ignore
+            substring = self.substring_dict[label]  # type: ignore
         except KeyError:
-            SystemExit(f"No cdr3 sequence found for {label}")
-        # remove '-' from cdr3_sequence
-        cdr3_sequence = cdr3_sequence.replace("-", "")
+            SystemExit(f"No matching substring found for {label}")
+        # remove '-' from substring
+        substring = substring.replace("-", "")
 
-        # get position of cdr3_sequence in sequence
-        start = max(full_sequence.find(cdr3_sequence) - context, 0) + int(
+        # get position of substring in sequence
+        start = max(full_sequence.find(substring) - context, 0) + int(
             special_tokens
         )
         end = (
-            min(start + len(cdr3_sequence) + context, len(full_sequence))
+            min(start + len(substring) + context, len(full_sequence))
             + special_tokens
         )
 
@@ -509,7 +508,7 @@ class BaseEmbedder:
             else:
                 self.logits["output_data"][layer].extend(tensor)
 
-    def _extract_embeddings(
+    def _extract_mean_pooled(
         self,
         representations,
         batch_labels,
@@ -532,16 +531,16 @@ class BaseEmbedder:
                 # output_file = self.embeddings["output_data"][layer]
                 # self.write_batch_to_disk(output_file, tensor, offset)
                 self.io_dispatcher.enqueue(
-                    output_type="embeddings",
+                    output_type="mean_pooled",
                     layer=layer,
                     head=None,
                     offset=offset,
                     array=self._to_numpy(tensor),  # Ensure it's on CPU and NumPy
                 )
             else:
-                self.embeddings["output_data"][layer].extend(tensor)
+                self.mean_pooled["output_data"][layer].extend(tensor)
 
-    def _extract_embeddings_unpooled(
+    def _extract_per_token(
         self,
         representations,
         batch_labels,
@@ -555,10 +554,10 @@ class BaseEmbedder:
                 if self.flatten:
                     tensor = tensor.flatten(start_dim=1)
                 if self.streaming_output:
-                    # output_file = self.embeddings_unpooled["output_data"][layer]
+                    # output_file = self.per_token["output_data"][layer]
                     # self.write_batch_to_disk(output_file, tensor, offset)
                     self.io_dispatcher.enqueue(
-                        output_type="embeddings_unpooled",
+                        output_type="per_token",
                         layer=layer,
                         head=None,
                         offset=offset,
@@ -567,24 +566,24 @@ class BaseEmbedder:
                         ),  # Ensure it's on CPU and NumPy
                     )
                 else:
-                    self.embeddings_unpooled["output_data"][layer].extend(tensor)
+                    self.per_token["output_data"][layer].extend(tensor)
         else:  # TODO remove padding tokens
             logger.warning("Feature not implemented yet")
             pass
             for layer in self.layers:  # type: ignore
                 if self.flatten:
-                    self.embeddings_unpooled["output_data"][layer].extend(
+                    self.per_token["output_data"][layer].extend(
                         [
                             representations[layer][i].flatten(start_dim=1)
                             for i in range(len(batch_labels))
                         ]
                     )
                 else:
-                    self.embeddings_unpooled["output_data"][layer].extend(
+                    self.per_token["output_data"][layer].extend(
                         [representations[layer][i] for i in range(len(batch_labels))]
                     )
 
-    def _extract_attention_matrices_all_heads(
+    def _extract_attention_head(
         self,
         attention_matrices,
         batch_labels,
@@ -615,11 +614,11 @@ class BaseEmbedder:
                         ),  # Ensure it's on CPU and NumPy
                     )
                 else:
-                    self.attention_matrices_all_heads["output_data"][layer][
+                    self.attention_head["output_data"][layer][
                         head
                     ].extend(tensor)
 
-    def _extract_attention_matrices_average_layer(
+    def _extract_attention_layer(
         self,
         attention_matrices,
         batch_labels,
@@ -647,11 +646,11 @@ class BaseEmbedder:
                     array=self._to_numpy(tensor),  # Ensure it's on CPU and NumPy
                 )
             else:
-                self.attention_matrices_average_layers["output_data"][layer].extend(
+                self.attention_layer["output_data"][layer].extend(
                     tensor
                 )
 
-    def _extract_attention_matrices_average_all(
+    def _extract_attention_model(
         self,
         attention_matrices,
         batch_labels,
@@ -678,34 +677,12 @@ class BaseEmbedder:
                 ),  # Ensure it's on CPU and NumPy
             )
         else:
-            self.attention_matrices_average_all["output_data"].extend(tensor)
+            self.attention_model["output_data"].extend(tensor)
 
-    def extract_cdr3_attention_matrices_average_all_heads(
-        self,
-        attention_matrices,
-        batch_labels,
-    ):
-        for layer in self.layers:  # type: ignore
-            for head in range(self.num_heads):  # type: ignore
-                tensor = []
-                for i, label in enumerate(batch_labels):
-                    start, end = self.get_cdr3_positions(label)  # type: ignore
-                    tensor.extend(
-                        attention_matrices[
-                            layer - 1, i, head, start:end, start:end
-                        ].mean(0)
-                    )
-                tensor = torch.stack(tensor)
-                self.cdr3_attention_matrices_all_heads["output_data"][layer][  # type: ignore
-                    head
-                ].extend(
-                    tensor
-                )
-
-    def _extract_cdr3(
+    def _extract_substring_pooled(
         self,
         representations,
-        cdr3_mask,
+        substring_mask,
         offset,
     ):
         for layer in self.layers:  # type: ignore
@@ -715,21 +692,21 @@ class BaseEmbedder:
                         (mask.unsqueeze(-1) * representations[layer][i]).sum(0)
                         / mask.unsqueeze(-1).sum(0)
                     )
-                    for i, mask in enumerate(cdr3_mask)
+                    for i, mask in enumerate(substring_mask)
                 ]
             )
             if self.streaming_output:
-                # output_file = self.cdr3_extracted["output_data"][layer]
+                # output_file = self.substring_pooled["output_data"][layer]
                 # self.write_batch_to_disk(output_file, tensor, offset)
                 self.io_dispatcher.enqueue(
-                    output_type="cdr3_extracted",
+                    output_type="substring_pooled",
                     layer=layer,
                     head=None,
                     offset=offset,
                     array=self._to_numpy(tensor),  # Ensure it's on CPU and NumPy
                 )
             else:
-                self.cdr3_extracted["output_data"][layer].extend(tensor)
+                self.substring_pooled["output_data"][layer].extend(tensor)
 
     def _prepare_tensor(self, data_list, flatten):
         tensor = torch.stack(data_list, dim=0)

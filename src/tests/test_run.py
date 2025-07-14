@@ -16,7 +16,7 @@ sys.argv = [
     "--output_path",
     "src/tests/test_files/test_output",
     "--substring_path",
-    "src/tests/test_files/test_cdr3.csv",
+    "src/tests/test_files/test_substring.csv",
     "--extract_embeddings",
     "mean_pooled",
     "per_token",

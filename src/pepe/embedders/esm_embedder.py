@@ -28,7 +28,7 @@ class ESMEmbedder(BaseEmbedder):
         self.special_tokens = self.get_special_tokens()
         self.layers = self._load_layers(self.layers)
         self.data_loader, self.max_length = self._load_data(
-            self.sequences, self.cdr3_dict
+            self.sequences, self.substring_dict
         )  # tokenize and batch sequences and update max_length
         self._set_output_objects()
 
@@ -93,11 +93,11 @@ class ESMEmbedder(BaseEmbedder):
         ]
         return layers
 
-    def _load_data(self, sequences, cdr3_dict=None):
+    def _load_data(self, sequences, substring_dict=None):
         # Creating a dataset from the input fasta file
         dataset = pepe.utils.ESMDataset(
             sequences,
-            cdr3_dict,
+            substring_dict,
             self.context,
             self.alphabet,
             self.max_length,

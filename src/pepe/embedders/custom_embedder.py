@@ -65,7 +65,7 @@ class CustomEmbedder(BaseEmbedder):
 
         # Load and tokenize data
         self.data_loader, self.max_length = self._load_data(
-            self.sequences, self.cdr3_dict
+            self.sequences, self.substring_dict
         )
 
         # Initialize output objects
@@ -297,12 +297,12 @@ class CustomEmbedder(BaseEmbedder):
         layers = [(i + self.num_layers + 1) % (self.num_layers + 1) for i in layers]
         return layers
 
-    def _load_data(self, sequences, cdr3_dict=None):
+    def _load_data(self, sequences, substring_dict=None):
         """Load and tokenize sequences."""
         # Create dataset
         dataset = CustomDataset(
             sequences,
-            cdr3_dict,
+            substring_dict,
             self.context,
             self.tokenizer,
             self.max_length,
@@ -553,13 +553,13 @@ class CustomDataset(pepe.utils.SequenceDictDataset):
     def __init__(
         self,
         sequences,
-        cdr3_dict,
+        substring_dict,
         context,
         tokenizer,
         max_length,
         add_special_tokens=True,
     ):
-        super().__init__(sequences, cdr3_dict, context)
+        super().__init__(sequences, substring_dict, context)
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.add_special_tokens = add_special_tokens
@@ -570,16 +570,16 @@ class CustomDataset(pepe.utils.SequenceDictDataset):
             self.data, tokenizer, max_length, add_special_tokens
         )
 
-        # Handle CDR3 sequences if provided
-        if self.cdr3_dict:
-            logger.info("Tokenizing CDR3 sequences...")
-            self.encoded_cdr3_data = self._encode_sequences(
-                self.filtered_cdr3_data,
+        # Handle substring sequences if provided
+        if self.substring_dict:
+            logger.info("Tokenizing substrings...")
+            self.encoded_substring_data = self._encode_sequences(
+                self.filtered_substring_data,
                 tokenizer,
                 "max_length",
                 add_special_tokens=False,
             )
-            self.cdr3_masks = self._get_subsequence_masks()
+            self.substring_masks = self._get_substring_masks()
 
     def _encode_sequences(self, data, tokenizer, max_length, add_special_tokens):
         """Encode sequences using the tokenizer."""
@@ -618,14 +618,14 @@ class CustomDataset(pepe.utils.SequenceDictDataset):
 
     def safe_collate(self, batch):
         """Collate function for data loader."""
-        if self.cdr3_dict:
-            labels, seqs, toks, attn_masks, cdr3_masks = zip(*batch)
+        if self.substring_dict:
+            labels, seqs, toks, attn_masks, substring_masks = zip(*batch)
             return (
                 list(labels),
                 list(seqs),
                 torch.stack(toks),
                 torch.stack(attn_masks),
-                torch.stack(cdr3_masks),
+                torch.stack(substring_masks),
             )
         else:
             labels, seqs, toks, attn_masks = zip(*batch)
@@ -640,8 +640,8 @@ class CustomDataset(pepe.utils.SequenceDictDataset):
     def __getitem__(self, idx):
         """Get item from dataset."""
         labels, seqs, toks, attn_mask = self.encoded_data[idx]
-        if self.cdr3_dict:
-            cdr3_masks = self.cdr3_masks[idx]
-            return labels, seqs, toks, attn_mask, cdr3_masks
+        if self.substring_dict:
+            substring_masks = self.substring_masks[idx]
+            return labels, seqs, toks, attn_mask, substring_masks
         else:
             return labels, seqs, toks, attn_mask

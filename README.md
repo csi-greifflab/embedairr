@@ -2,21 +2,23 @@
 
 PEPE (Pipeline for Easy Protein Embedding) is a tool for extracting embeddings and attention matrices from protein sequences using pre-trained models. This tool supports various configurations for extracting embeddings and attention matrices, including options for handling CDR3 sequences. Currently implemented models are ESM2 from the 2023 paper ["Evolutionary-scale prediction of atomic-level protein structure with a language model"](https://science.org/doi/10.1126/science.ade2574) and AntiBERTa2-CSSP from the 2023 pre-print ["Enhancing Antibody Language Models with Structural Information"](https://www.mlsb.io/papers_2023/Enhancing_Antibody_Language_Models_with_Structural_Information.pdf). PEPE also supports custom PLMs from local files or from Huggingface Hub addresses. 
 
-## Usage
+## Quick start
 
-1. Rust tools are required to build some dependencies. Install with:
+1. Install PEPE \
+    From PyPI:    
     ```sh
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+    pip install pypepe
     ```
-
-2. Install PEPE    
+    Or install from the GitHub repository:    
     ```sh
-    pip install pepe
+    git clone https://github.com/csi-greifflab/pypepe
+    cd pypepe
+    pip install .
     ```
-
-3. Run the embedding script:
+2. Run the embedding script:\
+    Extract mean pooled embeddings from protein amino acid sequences in FASTA file:
     ```sh
-    pepe --experiment_name <optional_string> --fasta_path <file_path> --output_path <directory> --model_name <model_name> --<other_optional_arguments>
+    pepe --experiment_name <optional_string> --fasta_path <file_path> --output_path <directory> --model_name <model_name>
     ```
 
 ## List of supported models:
@@ -41,19 +43,19 @@ PEPE (Pipeline for Easy Protein Embedding) is a tool for extracting embeddings a
         - esm2_t36_3B_UR50D
         - esm2_t48_15B_UR50D
 - Huggingface Transformer models
-    - T5 transformer models (tested)
+    - T5 transformer models
         - Rostlab/prot_t5_xl_half_uniref50-enc
         - Rostlab/ProstT5
-    - RoFormer models (tested)
-        - AntiBERTa2-CSSP
-        - AntiBERTa2
+    - RoFormer models
+        - alchemab/antiberta2-cssp
+        - alchemab/antiberta2
     - Custom Hugging Face models
         - Any compatible model from Hugging Face Hub: `username/model-name`
         - Private models with authentication
         - Local Hugging Face models
 - Custom Models
     - Load your own PyTorch models with custom tokenizers
-    - Create example with: `python create_example_custom_model.py`
+    - Create example with: `python examples/custom_model/create_example_custom_model.py`
 
 
 ## Arguments
@@ -63,7 +65,7 @@ PEPE (Pipeline for Easy Protein Embedding) is a tool for extracting embeddings a
   - ESM models: `esm2_t33_650M_UR50D`
   - Hugging Face models: `username/model-name`
   - Custom PyTorch models: `/path/to/model.pt` or `/path/to/model_directory/`
-  - Local HF models: `./local_hf_model`
+  - Local HF models: `/path/to/local_hf_directory/`
 - **`--fasta_path`** (str): Path to the input FASTA file. If no experiment name is provided, the output files will be named after the input file.
 - **`--output_path`** (str): Directory for output files. Will generate a subdirectory for outputs of each output type.
 
@@ -85,7 +87,8 @@ PEPE (Pipeline for Easy Protein Embedding) is a tool for extracting embeddings a
 
 ### Output Configuration
 - **`--experiment_name`** (str, optional): Prefix for names of output files. If not provided, name of input file will be used for prefix.
-- **`--streaming_output`** (bool, optional): When True, PEPE preallocates the required disk space and writes each batch of outputs concurrently. When False, all outputs are stored in RAM and written to disk at once after computation has finished. Default is `True`.
+- **`--streaming_output`** (bool, optional): PEPE preallocates the required disk space and writes each batch of outputs concurrently. Can pose issues with file systems that do not support memory mapping (such as some distributed file systems.)
+When False, all outputs are stored in RAM and written to disk at once after computation has finished. Default is `True`.
 - **`--precision`** (str, optional): Precision of the output data. Choose from `float16`, `16`, `half`, `float32`, `32`, `full`. Inference during embedding is not affected. Default is `float32`.
 - **`--flatten`** (bool, optional): Flatten 2D output arrays (per_token embeddings or attention weights) to 1D arrays per input sequence. Default is `False`.
 

@@ -270,11 +270,11 @@ def create_example_fasta(filename="./examples/custom_model/example_sequences.fas
     return filename
 
 
-def create_example_cdr3(filename="./examples/custom_model/example_cdr3.csv"):
+def create_example_substring(filename="./examples/custom_model/example_substring.csv"):
     """
-    Create an example CDR3 file.
+    Create an example substring file.
     """
-    cdr3_data = [
+    substring_data = [
         (
             "seq1",
             "AKQRQISFVKSHFSRQLEERLGLIEVQAPILSRVGDGTQDNLSGAEKAVQVKVKALPDAQFEVVHSLAKWKRQTLGQHDFSAGEGLYTHMKALRPDEDRLSLEVGQIA",
@@ -292,11 +292,11 @@ def create_example_cdr3(filename="./examples/custom_model/example_cdr3.csv"):
     ]
 
     with open(filename, "w") as f:
-        f.write("sequence_id,cdr3_sequence\n")
-        for seq_id, cdr3_seq in cdr3_data:
-            f.write(f"{seq_id},{cdr3_seq}\n")
+        f.write("sequence_id,substring_aa\n")
+        for seq_id, substring in substring_data:
+            f.write(f"{seq_id},{substring}\n")
 
-    print(f"Example CDR3 file created: {filename}")
+    print(f"Example substring file created: {filename}")
     return filename
 
 
@@ -311,42 +311,7 @@ def main():
 
     # Create example data
     fasta_file = create_example_fasta()
-    cdr3_file = create_example_cdr3()
-
-    print("\nExample files created successfully!")
-    print(f"Model directory: {model_path}")
-    print(f"FASTA file: {fasta_file}")
-    print(f"CDR3 file: {cdr3_file}")
-
-    print("\nTo use with EmbedAIRR:")
-    print("=" * 50)
-    print("# Basic usage")
-    print(f"python -m embedairr \\")
-    print(f"    --model_name {model_path} \\")
-    print(f"    --fasta_path {fasta_file} \\")
-    print(f"    --output_path ./custom_embeddings \\")
-    print(f"    --extract_embeddings pooled unpooled \\")
-    print(f"    --layers -1 3 6")
-    print()
-    print("# With CDR3 extraction")
-    print(f"python -m embedairr \\")
-    print(f"    --model_name {model_path} \\")
-    print(f"    --fasta_path {fasta_file} \\")
-    print(f"    --output_path ./custom_embeddings \\")
-    print(f"    --cdr3_path {cdr3_file} \\")
-    print(f"    --extract_embeddings pooled \\")
-    print(f"    --extract_cdr3_embeddings pooled \\")
-    print(f"    --layers -1")
-    print()
-    print("# With attention matrices")
-    print(f"python -m embedairr \\")
-    print(f"    --model_name {model_path} \\")
-    print(f"    --fasta_path {fasta_file} \\")
-    print(f"    --output_path ./custom_embeddings \\")
-    print(f"    --extract_embeddings pooled \\")
-    print(f"    --extract_attention_matrices average_layer \\")
-    print(f"    --layers -1 3 6")
-    print("=" * 50)
+    substring_file = create_example_substring()
 
     # Test loading the model
     print("\nTesting model loading...")

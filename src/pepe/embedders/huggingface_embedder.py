@@ -44,12 +44,12 @@ class HuggingfaceEmbedder(BaseEmbedder):
         ]
         return layers
 
-    def _load_data(self, sequences, cdr3_dict):
+    def _load_data(self, sequences, substring_dict):
         """Tokenize sequences and create a DataLoader."""
         # Tokenize sequences
         dataset = pepe.utils.HuggingFaceDataset(
             sequences,
-            cdr3_dict,
+            substring_dict,
             self.context,
             self.tokenizer,  # type: ignore
             self.max_length,
@@ -128,7 +128,7 @@ class Antiberta2Embedder(HuggingfaceEmbedder):
         )
         self.layers = self._load_layers(self.layers)
         self.data_loader, self.max_length = self._load_data(
-            self.sequences, self.cdr3_dict
+            self.sequences, self.substring_dict
         )
         self._set_output_objects()
         assert self.max_length <= 256, "AntiBERTa2 only supports max_length <= 256"
@@ -171,7 +171,7 @@ class T5Embedder(HuggingfaceEmbedder):
         )
         self.layers = self._load_layers(self.layers)
         self.data_loader, self.max_length = self._load_data(
-            self.sequences, self.cdr3_dict
+            self.sequences, self.substring_dict
         )
         self._set_output_objects()
 

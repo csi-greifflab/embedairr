@@ -34,7 +34,6 @@ dependencies = [
     "numpy",
     "protobuf",
     "rjieba",
-    "psutil",
     "alive_progress",
 ]
 
