@@ -723,54 +723,36 @@ class BaseEmbedder:
 
             output_data = getattr(self, output_type)["output_data"]
             output_dir = getattr(self, output_type)["output_dir"]
-            flatten = self.flatten and "unpooled" in output_type
 
-            if "attention_matrices" not in output_type and "logits" not in output_type:
+            if isinstance(output_data, dict):
                 for layer in self.layers:  # type: ignore
-                    tensor = self._prepare_tensor(output_data[layer], flatten)
-                    file_path = self._make_output_filepath(
-                        output_type, output_dir, layer
-                    )
-                    np.save(file_path, tensor)
-                    logger.info(f"Saved {output_type} layer {layer} to {file_path}")
-
-            elif "average_all" in output_type:
+                    if isinstance(output_data[layer], dict):  # e.g., attention_head
+                        for head in range(self.num_heads):  # type: ignore
+                            tensor = self._prepare_tensor(
+                                output_data[layer][head], self.flatten
+                            )
+                            file_path = self._make_output_filepath(
+                                output_type, output_dir, layer, head
+                            )
+                            np.save(file_path, tensor)
+                            logger.info(
+                                f"Saved {output_type} layer {layer} head {head + 1} to {file_path}"
+                            )
+                    else:
+                        # Handle layer-based outputs (mean_pooled, per_token, substring_pooled, attention_layer, logits)
+                        flatten = self.flatten and output_type == "per_token"
+                        tensor = self._prepare_tensor(output_data[layer], flatten)
+                        file_path = self._make_output_filepath(
+                            output_type, output_dir, layer
+                        )
+                        np.save(file_path, tensor)
+                        logger.info(f"Saved {output_type} layer {layer} to {file_path}")
+            else:
+                # Handle model-level outputs (attention_model)
                 tensor = self._prepare_tensor(output_data, self.flatten)
                 file_path = self._make_output_filepath(output_type, output_dir)
                 np.save(file_path, tensor)
                 logger.info(f"Saved {output_type} to {file_path}")
-
-            elif "average_layer" in output_type:
-                for layer in self.layers:  # type: ignore
-                    tensor = self._prepare_tensor(output_data[layer], self.flatten)
-                    file_path = self._make_output_filepath(
-                        output_type, output_dir, layer
-                    )
-                    np.save(file_path, tensor)
-                    logger.info(f"Saved {output_type} layer {layer} to {file_path}")
-
-            elif "all_heads" in output_type:
-                for layer in self.layers:  # type: ignore
-                    for head in range(self.num_heads):  # type: ignore
-                        tensor = self._prepare_tensor(
-                            output_data[layer][head], self.flatten
-                        )
-                        file_path = self._make_output_filepath(
-                            output_type, output_dir, layer, head
-                        )
-                        np.save(file_path, tensor)
-                        logger.info(
-                            f"Saved {output_type} layer {layer} head {head + 1} to {file_path}"
-                        )
-
-            elif "logits" in output_type:
-                for layer in self.layers:  # type: ignore
-                    tensor = self._prepare_tensor(output_data[layer], flatten=False)
-                    file_path = self._make_output_filepath(
-                        output_type, output_dir, layer
-                    )
-                    np.save(file_path, tensor)
-                    logger.info(f"Saved {output_type} layer {layer} to {file_path}")
 
     def export_sequence_indices(self):
         """Save sequence indices to a CSV file."""
