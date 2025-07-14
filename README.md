@@ -1,6 +1,6 @@
 # PEPE
 
-PEPE (Pipeline for Easy Protein Embedding) is a tool for extracting embeddings and attention matrices from protein sequences using pre-trained models. This tool supports various configurations for extracting embeddings and attention matrices, including options for handling CDR3 sequences. Currently implemented models are ESM2 from the 2023 paper ["Evolutionary-scale prediction of atomic-level protein structure with a language model"](https://science.org/doi/10.1126/science.ade2574) and AntiBERTa2-CSSP from the 2023 pre-print ["Enhancing Antibody Language Models with Structural Information"](https://www.mlsb.io/papers_2023/Enhancing_Antibody_Language_Models_with_Structural_Information.pdf). PEPE also supports custom PLMs from local files or from Huggingface Hub addresses. 
+PEPE (Pipeline for Easy Protein Embedding) is a tool for extracting embeddings and attention matrices from protein sequences using pre-trained models. This tool supports various configurations for extracting embeddings and attention matrices, including options for handling CDR3 sequences. Currently implemented models are ESM2 from the 2023 paper ["Evolutionary-scale prediction of atomic-level protein structure with a language model"](https://science.org/doi/10.1126/science.ade2574) and AntiBERTa2-CSSP from the 2023 conference paper ["Enhancing Antibody Language Models with Structural Information"](https://www.mlsb.io/papers_2023/Enhancing_Antibody_Language_Models_with_Structural_Information.pdf). PEPE also supports custom PLMs from local files or from Huggingface Hub addresses. 
 
 ## Quick start
 
@@ -61,7 +61,7 @@ PEPE (Pipeline for Easy Protein Embedding) is a tool for extracting embeddings a
 ## Arguments
 
 ### Required Arguments
-- **`--model_name`** (str): Name of model or link to model. Choose from 'List of supported models' or use custom models:
+- **`--model_name`** (str): Name of model or link to model. Choose from [List of supported models](../README.md#list-of-supported-models) or use custom models:
   - ESM models: `esm2_t33_650M_UR50D`
   - Hugging Face models: `username/model-name`
   - Custom PyTorch models: `/path/to/model.pt` or `/path/to/model_directory/`

@@ -16,7 +16,9 @@ Multiple embedding modes can be selected at once using the ```--extract_embeddin
 - Embeddings:
     - ```"per_token"```: Uncompressed output of a transformer block. Contains high-dimensional representation of each amino acid in the protein sequence.
     - ```"mean_pooled"``` (default option): Average of ```"per_token"``` embedding over all amino acid tokens of the protein sequence.
-    - ```"substring_pooled"```: Average of ```"per_token"``` embedding over a specified substring of the protein sequence. When selected, the path to a CSV file with two columns. The first column contains the ```sequence_id``` and the second column must contain a substring of the sequence provided in the FASTA input file.
+    - ```"substring_pooled"```: Average of ```"per_token"``` embedding over a specified substring of the protein sequence. Additional arguments when selected:
+        - ```--substring_path``` (required for ```"substring_pooled"```): Path to a CSV file with two columns. The first column contains the ```sequence_id``` and the second column must contain a substring of the sequence provided in the FASTA input file.
+        - ```--context``` (optional): Specify the number of residues before and after the substring to include during pooling. 
 - Attention weights:
     - ```"attention_head"```: Asymmetrical pairwise attention weight matrices of input tokens from each self-attention head of the specified layer(s)
     - ```"attention_layer"```: Average of ```"attention_head"``` per specified layer.
