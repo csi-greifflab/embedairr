@@ -7,12 +7,12 @@ PEPE (Pipeline for Easy Protein Embedding) is a tool for extracting embeddings a
 1. Install PEPE \
     From PyPI:    
     ```sh
-    pip install pypepe
+    pip install pepe-cli
     ```
     Or install from the GitHub repository:    
     ```sh
-    git clone https://github.com/csi-greifflab/pypepe
-    cd pypepe
+    git clone https://github.com/csi-greifflab/pepe-cli
+    cd pepe-cli
     pip install .
     ```
 2. Run the embedding script:\
