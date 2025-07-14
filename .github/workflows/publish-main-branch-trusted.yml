@@ -1,0 +1,146 @@
+name: Publish Main Branch to PyPI (Trusted Publishing)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:  # Allows manual triggering
+
+jobs:
+  build-and-publish-main:
+    runs-on: ubuntu-latest
+    environment: pypi  # GitHub environment for publishing
+    permissions:
+      id-token: write  # Required for trusted publishing
+      contents: read
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install build dependencies
+      run: |
+        python3 -m pip install --upgrade pip
+        pip install build
+    
+    - name: Verify version for main branch
+      run: |
+        # Get current version and package name from __init__.py
+        CURRENT_VERSION=$(python3 -c "import sys; sys.path.insert(0, 'src'); from pepe import __version__; print(__version__)")
+        PACKAGE_NAME=$(python3 -c "import sys; sys.path.insert(0, 'src'); from pepe import __package_name__; print(__package_name__)")
+        MODULE_NAME=$(python3 -c "import sys; sys.path.insert(0, 'src'); from pepe import __module_name__; print(__module_name__)")
+        
+        # Check if version contains -dev or -test (should not be in main branch)
+        if [[ "$CURRENT_VERSION" == *"-dev"* ]] || [[ "$CURRENT_VERSION" == *"-test"* ]]; then
+          echo "❌ Error: Version $CURRENT_VERSION contains development/test suffix"
+          echo "Main branch should have a clean version number (e.g., 1.0.0, 1.2.3)"
+          exit 1
+        fi
+        
+        echo "✅ Version validation passed: $CURRENT_VERSION"
+        echo "Package name: $PACKAGE_NAME"
+        echo "Module name: $MODULE_NAME"
+        grep "__version__" src/pepe/__init__.py
+    
+    - name: Build package
+      run: python3 -m build
+    
+    - name: Publish to PyPI (Trusted Publishing)
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        verbose: true
+    
+    - name: Output installation command
+      run: |
+        # Get package name from __init__.py
+        PACKAGE_NAME=$(python3 -c "import sys; sys.path.insert(0, 'src'); from pepe import __package_name__; print(__package_name__)")
+        CURRENT_VERSION=$(python3 -c "import sys; sys.path.insert(0, 'src'); from pepe import __version__; print(__version__)")
+        echo "🎉 Package published to PyPI!"
+        echo "To install the release version, run:"
+        echo "pip install \"$PACKAGE_NAME==$CURRENT_VERSION\""
+        echo "Or for the latest version:"
+        echo "pip install \"$PACKAGE_NAME\""
+    
+    - name: Wait for package availability
+      run: |
+        echo "Waiting for package to be available on PyPI..."
+        sleep 60  # PyPI usually takes a bit longer than TestPyPI
+    
+    - name: Test installation and functionality
+      run: |
+        # Get package and module names from __init__.py
+        PACKAGE_NAME=$(python3 -c "import sys; sys.path.insert(0, 'src'); from pepe import __package_name__; print(__package_name__)")
+        MODULE_NAME=$(python3 -c "import sys; sys.path.insert(0, 'src'); from pepe import __module_name__; print(__module_name__)")
+        CURRENT_VERSION=$(python3 -c "import sys; sys.path.insert(0, 'src'); from pepe import __version__; print(__version__)")
+        
+        # Create a fresh virtual environment for testing
+        python3 -m venv test_env
+        source test_env/bin/activate
+        
+        # Install the package from PyPI
+        pip install "$PACKAGE_NAME==$CURRENT_VERSION"
+        
+        # Verify installation
+        pip list | grep -i pepe
+        
+        # Test basic import
+        python3 -c "import $MODULE_NAME; print('Package imported successfully')"
+        
+        # Test version matches
+        INSTALLED_VERSION=$(python3 -c "import $MODULE_NAME; print($MODULE_NAME.__version__)")
+        if [ "$INSTALLED_VERSION" != "$CURRENT_VERSION" ]; then
+          echo "❌ Version mismatch: expected $CURRENT_VERSION, got $INSTALLED_VERSION"
+          exit 1
+        fi
+        echo "✅ Version verification passed: $INSTALLED_VERSION"
+        
+        # Run the test script
+        echo "Running test script..."
+        chmod +x src/tests/test_run.sh
+        bash src/tests/test_run.sh
+        
+        # Check if test output was created
+        if [ -d "src/tests/test_files/test_output" ]; then
+          echo "✅ Test completed successfully - output directory created"
+          ls -la src/tests/test_files/test_output/
+        else
+          echo "❌ Test failed - no output directory found"
+          exit 1
+        fi
+        
+        # Clean up
+        deactivate
+        rm -rf test_env
+        
+        echo "🎉 Package verification completed successfully!"
+        echo "Package $PACKAGE_NAME version $CURRENT_VERSION is now available on PyPI!"
+    
+    - name: Get version for release
+      id: get_version
+      run: |
+        VERSION=$(python3 -c "import sys; sys.path.insert(0, 'src'); from pepe import __version__; print(__version__)")
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+    
+    - name: Create GitHub Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ steps.get_version.outputs.version }}
+        release_name: Release v${{ steps.get_version.outputs.version }}
+        body: |
+          Release of pepe-cli version ${{ steps.get_version.outputs.version }}
+          
+          ## Installation
+          ```bash
+          pip install pepe-cli==${{ steps.get_version.outputs.version }}
+          ```
+          
+          ## Changes
+          See [CHANGELOG.md](CHANGELOG.md) for details.
+        draft: false
+        prerelease: false
+      id: create_release

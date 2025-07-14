@@ -3,8 +3,8 @@ requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pypepe"
-version = "1.0.0-dev1"
+name = "pepe-cli"
+dynamic = ["version"]
 authors = [
     {name = "Jahn Zhong", email = "jahn.zhong@medisin.uio.no"},
 ]
@@ -38,17 +38,20 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/csi-greifflab/pypepe"  # Replace with your GitHub URL
-"Bug Reports" = "https://github.com/csi-greifflab/pypepe/issues"
-"Source" = "https://github.com/csi-greifflab/pypepe"
-"Documentation" = "https://github.com/csi-greifflab/pypepe#readme"
+Homepage = "https://github.com/csi-greifflab/pepe-cli"
+"Bug Reports" = "https://github.com/csi-greifflab/pepe-cli/issues"
+"Source" = "https://github.com/csi-greifflab/pepe-cli"
+"Documentation" = "https://github.com/csi-greifflab/pepe-cli#readme"
 
 [project.scripts]
 pepe = "pepe.__main__:main"
-pypepe = "pepe.__main__:main"
+pepe-cli = "pepe.__main__:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "pepe.__version__"}

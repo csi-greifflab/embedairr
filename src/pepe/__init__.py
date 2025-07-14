@@ -1,7 +1,14 @@
 import logging
 import sys
 
-__version__ = "1.0.0-dev1"
+# Package metadata - single source of truth
+__version__ = "1.0.0"
+__package_name__ = "pepe-cli"
+__module_name__ = "pepe"
+__author__ = "Jahn Zhong"
+__author_email__ = "jahn.zhong@medisin.uio.no"
+__description__ = "Pipeline for Easy Protein Embedding - Extract embeddings and attention matrices from protein sequences"
+__homepage__ = "https://github.com/csi-greifflab/pepe-cli"
 
 
 # Configure logging for the embedairr package

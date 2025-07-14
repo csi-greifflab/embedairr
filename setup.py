@@ -1,5 +1,10 @@
 from setuptools import setup, find_packages
 import os
+import sys
+
+# Add src to the Python path to import metadata
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+from pepe import __version__, __package_name__, __author__, __author_email__, __description__, __homepage__, __module_name__
 
 
 # Read the README file for long description
@@ -10,14 +15,14 @@ def read_readme():
 
 
 setup(
-    name="pypepe",
-    version="1.0.0-dev1",
-    author="Jahn Zhong",
-    author_email="jahn.zhong@medisin.uio.no",
-    description="Pipeline for Easy Protein Embedding - Extract embeddings and attention matrices from protein sequences",
+    name=__package_name__,
+    version=__version__,
+    author=__author__,
+    author_email=__author_email__,
+    description=__description__,
     long_description=read_readme(),
     long_description_content_type="text/markdown",
-    url="https://github.com/csi-greifflab/pypepe",
+    url=__homepage__,
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     classifiers=[
@@ -47,15 +52,15 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "pepe = pepe.__main__:main",
-            "pypepe = pepe.__main__:main",
+            f"pepe = {__module_name__}.__main__:main",
+            f"{__package_name__} = {__module_name__}.__main__:main",
         ]
     },
     keywords="protein embeddings bioinformatics machine-learning nlp transformers",
     project_urls={
-        "Bug Reports": "https://github.com/csi-greifflab/pypepe/issues",
-        "Source": "https://github.com/csi-greifflab/pypepe",
-        "Documentation": "https://github.com/csi-greifflab/pypepe#readme",
+        "Bug Reports": f"{__homepage__}/issues",
+        "Source": __homepage__,
+        "Documentation": f"{__homepage__}#readme",
     },
     include_package_data=True,
 )
