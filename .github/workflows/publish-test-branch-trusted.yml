@@ -30,9 +30,8 @@ jobs:
       run: |
         # Get current timestamp for unique version
         TIMESTAMP=$(date +%Y%m%d%H%M%S)
-        COMMIT_SHA=$(git rev-parse --short HEAD)
-        # Update version in pyproject.toml to include test identifier
-        sed -i "s/version = \"1.0.0-dev1\"/version = \"1.0.0.dev${TIMESTAMP}+${COMMIT_SHA}\"/" pyproject.toml
+        # Update version in pyproject.toml to include test identifier (no local version)
+        sed -i "s/version = \"1.0.0-dev1\"/version = \"1.0.0.dev${TIMESTAMP}\"/" pyproject.toml
         echo "Updated version to test build"
         grep "version =" pyproject.toml
     

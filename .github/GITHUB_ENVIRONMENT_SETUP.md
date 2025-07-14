@@ -114,6 +114,18 @@ After successful workflow completion:
    - Push to test branch to see if trusted publishing works
    - Add the environment back once confirmed working
 
+## Common TestPyPI Version Issues
+
+### "Local versions not allowed" Error
+
+**Problem**: Error message like `The use of local versions in <Version('1.0.0.dev20250714131355+9372b3f')> is not allowed`
+
+**Solution**: This happens when the version contains a local identifier (the `+commit_hash` part). The workflows have been updated to use only development versions without local identifiers.
+
+**Fixed version format**: `1.0.0.dev20250714131355` (no `+commit_hash`)
+
+If you see this error, ensure your workflow uses the corrected versioning scheme without the `+${COMMIT_SHA}` part.
+
 ## Security Benefits
 
 - ✅ No API tokens to manage or rotate
