@@ -1,0 +1,52 @@
+name: Publish Test Branch to TestPyPI (Trusted Publishing)
+
+on:
+  push:
+    branches: [ test ]
+  workflow_dispatch:  # Allows manual triggering
+
+jobs:
+  build-and-publish-test:
+    runs-on: ubuntu-latest
+    environment: testpypi  # GitHub environment for publishing
+    permissions:
+      id-token: write  # Required for trusted publishing
+      contents: read
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install build dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install build
+    
+    - name: Update version for test branch
+      run: |
+        # Get current timestamp for unique version
+        TIMESTAMP=$(date +%Y%m%d%H%M%S)
+        COMMIT_SHA=$(git rev-parse --short HEAD)
+        # Update version in pyproject.toml to include test identifier
+        sed -i "s/version = \"1.0.0-dev1\"/version = \"1.0.0.dev${TIMESTAMP}+${COMMIT_SHA}\"/" pyproject.toml
+        echo "Updated version to test build"
+        grep "version =" pyproject.toml
+    
+    - name: Build package
+      run: python -m build
+    
+    - name: Publish to TestPyPI (Trusted Publishing)
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        repository-url: https://test.pypi.org/legacy/
+        verbose: true
+    
+    - name: Output installation command
+      run: |
+        echo "Package published to TestPyPI!"
+        echo "To install the test version, run:"
+        echo "pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple pypepe"
