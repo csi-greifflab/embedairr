@@ -3,14 +3,14 @@ requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pepe-greifflab"
+name = "pypepe"
 version = "1.0.0-dev1"
 authors = [
     {name = "Jahn Zhong", email = "jahn.zhong@medisin.uio.no"},
 ]
 description = "Pipeline for Easy Protein Embedding - Extract embeddings and attention matrices from protein sequences"
 readme = "README.md"
-license = {text = "AGPL-3.0"}
+license = {text = "MIT"}
 requires-python = ">=3.8"
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -39,14 +39,14 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/csi-greifflab/pepe-greifflab"  # Replace with your GitHub URL
-"Bug Reports" = "https://github.com/csi-greifflab/pepe-greifflab/issues"
-"Source" = "https://github.com/csi-greifflab/pepe-greifflab"
-"Documentation" = "https://github.com/csi-greifflab/pepe-greifflab#readme"
+Homepage = "https://github.com/csi-greifflab/pypepe"  # Replace with your GitHub URL
+"Bug Reports" = "https://github.com/csi-greifflab/pypepe/issues"
+"Source" = "https://github.com/csi-greifflab/pypepe"
+"Documentation" = "https://github.com/csi-greifflab/pypepe#readme"
 
 [project.scripts]
 pepe = "pepe.__main__:main"
-pepe-greifflab = "pepe.__main__:main"
+pypepe = "pepe.__main__:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
