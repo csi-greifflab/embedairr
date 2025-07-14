@@ -11,7 +11,8 @@ jobs:
     environment: pypi  # GitHub environment for publishing
     permissions:
       id-token: write  # Required for trusted publishing
-      contents: read
+      contents: write  # Required for creating releases
+      pull-requests: read
     
     steps:
     - uses: actions/checkout@v4
@@ -125,22 +126,33 @@ jobs:
         echo "version=$VERSION" >> $GITHUB_OUTPUT
     
     - name: Create GitHub Release
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      uses: softprops/action-gh-release@v1
       with:
         tag_name: v${{ steps.get_version.outputs.version }}
-        release_name: Release v${{ steps.get_version.outputs.version }}
+        name: Release v${{ steps.get_version.outputs.version }}
         body: |
           Release of pepe-cli version ${{ steps.get_version.outputs.version }}
           
           ## Installation
+          
+          ### From PyPI (Recommended)
           ```bash
           pip install pepe-cli==${{ steps.get_version.outputs.version }}
           ```
           
+          ### From GitHub Release
+          Download the wheel file and install:
+          ```bash
+          pip install pepe_cli-${{ steps.get_version.outputs.version }}-py3-none-any.whl
+          ```
+          
           ## Changes
           See [CHANGELOG.md](CHANGELOG.md) for details.
+        files: |
+          dist/*.whl
+          dist/*.tar.gz
         draft: false
         prerelease: false
-      id: create_release
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
