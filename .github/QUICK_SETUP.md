@@ -41,6 +41,11 @@ git push origin test
 - Workflow: `publish-test-branch-trusted.yml`
 - Environment: `testpypi`
 
+## 📁 Workflow File
+
+Only one workflow file is needed:
+- `publish-test-branch-trusted.yml` - Trusted publishing with verification
+
 ## 🚀 What Happens Next
 
 1. Push to `test` branch → Workflow triggers
