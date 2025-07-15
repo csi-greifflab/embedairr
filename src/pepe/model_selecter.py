@@ -1,19 +1,32 @@
-from pepe.embedders.esm_embedder import ESMEmbedder
-from pepe.embedders.huggingface_embedder import T5Embedder, Antiberta2Embedder
 from pepe.embedders.custom_embedder import CustomEmbedder
-
 
 import os
 
 
+def _get_esm_embedder():
+    """Lazy import of ESM embedder to avoid loading heavy dependencies."""
+    from pepe.embedders.esm_embedder import ESMEmbedder
+
+    return ESMEmbedder
+
+
+def _get_huggingface_embedders():
+    """Lazy import of HuggingFace embedders to avoid loading heavy dependencies."""
+    from pepe.embedders.huggingface_embedder import T5Embedder, Antiberta2Embedder
+
+    return T5Embedder, Antiberta2Embedder
+
+
 def select_model(model_name):
     if "esm2" in model_name.lower():
-        return ESMEmbedder
+        return _get_esm_embedder()
     elif "esm1" in model_name.lower():
-        return ESMEmbedder
+        return _get_esm_embedder()
     # elif "antiberta2" in model_name.lower() and model_name.startswith("alchemab"):
+    #    T5Embedder, Antiberta2Embedder = _get_huggingface_embedders()
     #    return Antiberta2Embedder
     # elif "t5" in model_name.lower() and model_name.startswith("Rostlab"):
+    #    T5Embedder, Antiberta2Embedder = _get_huggingface_embedders()
     #    return T5Embedder
     elif (
         model_name.endswith(".pt")
@@ -35,8 +48,10 @@ def select_model(model_name):
             model_type = config.model_type.lower()
 
             if model_type in ["t5", "mt5"]:
+                T5Embedder, Antiberta2Embedder = _get_huggingface_embedders()
                 return T5Embedder
             elif model_type in ["roformer"]:
+                T5Embedder, Antiberta2Embedder = _get_huggingface_embedders()
                 return Antiberta2Embedder
             elif model_type in ["bert"]:
                 # For BERT-like models, we could potentially use a generic embedder

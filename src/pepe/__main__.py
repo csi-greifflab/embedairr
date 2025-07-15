@@ -1,5 +1,4 @@
 import logging
-from pepe.model_selecter import select_model
 from pepe.parse_arguments import parse_arguments
 
 logger = logging.getLogger("src.__main__")
@@ -7,6 +6,9 @@ logger = logging.getLogger("src.__main__")
 
 def main():
     args = parse_arguments()
+
+    # Lazy import to avoid loading heavy dependencies during --help
+    from pepe.model_selecter import select_model
 
     selected_model = select_model(args.model_name)
 

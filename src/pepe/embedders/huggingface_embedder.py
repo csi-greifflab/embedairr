@@ -3,11 +3,30 @@ import os
 import torch
 import pepe.utils
 from pepe.embedders.base_embedder import BaseEmbedder
-from transformers import T5EncoderModel, T5Tokenizer
-from transformers import RoFormerTokenizer, RoFormerModel
-from transformers.models.roformer.modeling_roformer import (
-    RoFormerSinusoidalPositionalEmbedding,
-)
+
+
+# Lazy imports to avoid loading heavy dependencies at import time
+def _import_transformers():
+    """Lazy import of transformers components to avoid loading issues."""
+    try:
+        from transformers import T5EncoderModel, T5Tokenizer
+        from transformers import RoFormerTokenizer, RoFormerModel
+        from transformers.models.roformer.modeling_roformer import (
+            RoFormerSinusoidalPositionalEmbedding,
+        )
+
+        return (
+            T5EncoderModel,
+            T5Tokenizer,
+            RoFormerTokenizer,
+            RoFormerModel,
+            RoFormerSinusoidalPositionalEmbedding,
+        )
+    except ImportError as e:
+        logger.error(f"Failed to import transformers: {e}")
+        raise ImportError(
+            "Failed to import transformers. Please ensure transformers is installed: pip install transformers"
+        ) from e
 
 
 # Set max_split_size_mb
@@ -141,6 +160,16 @@ class Antiberta2Embedder(HuggingfaceEmbedder):
         else:
             device = torch.device("cpu")
             logger.info("No GPU available, using CPU")
+
+        # Lazy import transformers components
+        (
+            T5EncoderModel,
+            T5Tokenizer,
+            RoFormerTokenizer,
+            RoFormerModel,
+            RoFormerSinusoidalPositionalEmbedding,
+        ) = _import_transformers()
+
         tokenizer = RoFormerTokenizer.from_pretrained(model_link, use_fast=True)
         model = RoFormerModel.from_pretrained(model_link).to(device)  # type: ignore
         model.eval()
@@ -191,6 +220,16 @@ class T5Embedder(HuggingfaceEmbedder):
         else:
             device = torch.device("cpu")
             logger.info("No GPU available, using CPU")
+
+        # Lazy import transformers components
+        (
+            T5EncoderModel,
+            T5Tokenizer,
+            RoFormerTokenizer,
+            RoFormerModel,
+            RoFormerSinusoidalPositionalEmbedding,
+        ) = _import_transformers()
+
         tokenizer = T5Tokenizer.from_pretrained(model_link, use_fast=True)
         model = T5EncoderModel.from_pretrained(model_link).to(device)  # type: ignore
         model.eval()

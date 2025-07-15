@@ -1,8 +1,22 @@
 import logging
 import torch
-from esm import pretrained
 from pepe.embedders.base_embedder import BaseEmbedder
 import pepe.utils
+
+
+# Lazy imports to avoid loading heavy dependencies at import time
+def _import_esm():
+    """Lazy import of ESM components to avoid loading issues."""
+    try:
+        from esm import pretrained
+
+        return pretrained
+    except ImportError as e:
+        logger.error(f"Failed to import ESM: {e}")
+        raise ImportError(
+            "Failed to import ESM. Please ensure fair-esm is installed: pip install fair-esm"
+        ) from e
+
 
 logger = logging.getLogger("src.embedders.esm_embedder")
 
@@ -36,6 +50,10 @@ class ESMEmbedder(BaseEmbedder):
         """Initialize the model, tokenizer"""
         #  Loading the pretrained model and alphabet for tokenization
         logger.info("Loading model...")
+
+        # Lazy import ESM components
+        pretrained = _import_esm()
+
         # model, alphabet = pretrained.load_model_and_alphabet(model_name)
         model, alphabet = pretrained.load_model_and_alphabet_hub(model_name)
         model.eval()  # Setting the model to evaluation mode
