@@ -7,7 +7,7 @@ from numpy.lib.format import open_memmap
 import inspect
 import gc
 from pepe.utils import MultiIODispatcher, check_disk_free_space
-from pepe.embedders.components import EmbeddingProcessor, StreamingIO
+from pepe.embedders.components import EmbeddingProcessor, StreamingIO, EmbedderConfig
 from alive_progress import alive_bar
 import time
 from pathlib import Path
@@ -18,103 +18,53 @@ logger = logging.getLogger("src.embedders.base_embedder")
 
 class BaseEmbedder:
     def __init__(self, args):
-        self.fasta_path = args.fasta_path
-        self.model_link = args.model_name
-        self.disable_special_tokens = args.disable_special_tokens
-        if (
-            self.model_link.endswith(".pt")
-            or self.model_link.endswith(".pth")
-            or self.model_link.startswith("custom:")
-            or (
-                os.path.exists(self.model_link)
-                and (os.path.isfile(self.model_link) or os.path.isdir(self.model_link))
-            )
-        ):
-            self.model_name = Path(
-                self.model_link
-            ).stem  # Use the stem of the model link as the model name
-        else:
-            self.model_name = re.sub(r"^.*?/", "", self.model_link)
-        self.output_path = os.path.join(args.output_path, self.model_name)
-        # Check if output directory exists and creates it if it's missing
-        if not os.path.exists(self.output_path):
-            os.makedirs(self.output_path)
-        if not args.experiment_name:
-            self.output_prefix = os.path.splitext(os.path.basename(self.fasta_path))[
-                0
-            ]  # get filename without extension and path
-        else:
-            self.output_prefix = args.experiment_name
-        self.substring_path = args.substring_path
-        self.context = args.context
-        self.layers = (
-            [j for i in args.layers for j in i] if args.layers != [None] else None
-        )
-        self.substring_dict = (
-            self._load_substrings(args.substring_path) if args.substring_path else None
-        )
-        self.batch_size = args.batch_size
-        self.max_length = args.max_length
-        if torch.cuda.is_available() and args.device == "cuda":
-            self.device = torch.device("cuda")
-        else:
-            self.device = torch.device("cpu")
-        self.output_types = args.extract_embeddings
-        self.discard_padding = args.discard_padding
-        self.flatten = args.flatten
-        self.return_embeddings = False
-        self.return_contacts = False
-        self.return_logits = False
-        for output_type in self.output_types:
-            if "pooled" in output_type or "per_token" in output_type:
-                self.return_embeddings = True
-            if "attention" in output_type:
-                self.return_contacts = True
-            if output_type == "logits":
-                self.return_logits = True
-        self.streaming_output = args.streaming_output
-        self.num_workers = args.num_workers if self.streaming_output else 1
-        self.max_in_flight = self.num_workers * 2
-        self.flush_batches_after = args.flush_batches_after * 1024**2  # in bytes
-        self.precision = args.precision
-        # self.log_memory = args.log_memory # TODO implement memory logging
-
-        # Set up checkpoint directory for crash recovery
-        self.checkpoint_dir = self.output_path
+        # Initialize configuration
+        self.config = EmbedderConfig(args)
+        
+        # Set up configuration attributes for backward compatibility
+        self.fasta_path = self.config.fasta_path
+        self.model_link = self.config.model_link
+        self.model_name = self.config.model_name
+        self.output_path = self.config.output_path
+        self.output_prefix = self.config.output_prefix
+        self.substring_path = self.config.substring_path
+        self.context = self.config.context
+        self.layers = self.config.layers
+        self.substring_dict = self.config.substring_dict
+        self.batch_size = self.config.batch_size
+        self.max_length = self.config.max_length
+        self.device = self.config.device
+        self.output_types = self.config.output_types
+        self.discard_padding = self.config.discard_padding
+        self.flatten = self.config.flatten
+        self.return_embeddings = self.config.return_embeddings
+        self.return_contacts = self.config.return_contacts
+        self.return_logits = self.config.return_logits
+        self.streaming_output = self.config.streaming_output
+        self.num_workers = self.config.num_workers
+        self.max_in_flight = self.config.max_in_flight
+        self.flush_batches_after = self.config.flush_batches_after
+        self.precision = self.config.precision
+        self.disable_special_tokens = self.config.disable_special_tokens
+        self.checkpoint_dir = self.config.checkpoint_dir
         
         # Initialize StreamingIO
         self.streaming_io = StreamingIO(
-            output_path=self.output_path,
-            output_prefix=self.output_prefix,
-            model_name=self.model_name,
-            output_types=self.output_types,
-            precision=self.precision,
-            streaming_output=self.streaming_output,
-            num_workers=self.num_workers,
-            flush_batches_after=self.flush_batches_after,
-            layers=self.layers,
+            output_path=self.config.output_path,
+            output_prefix=self.config.output_prefix,
+            model_name=self.config.model_name,
+            output_types=self.config.output_types,
+            precision=self.config.precision,
+            streaming_output=self.config.streaming_output,
+            num_workers=self.config.num_workers,
+            flush_batches_after=self.config.flush_batches_after,
+            layers=self.config.layers,
             num_heads=getattr(self, 'num_heads', None),
-            flatten=self.flatten,
-            fasta_path=self.fasta_path,
+            flatten=self.config.flatten,
+            fasta_path=self.config.fasta_path,
         )
 
-    def _precision_to_dtype(self, precision, framework):
-        half_precision = ["float16", "16", "half"]
-        full_precision = ["float32", "32", "full"]
-        if precision in half_precision:
-            if framework == "torch":
-                return torch.float16
-            elif framework == "numpy":
-                return np.float16
-        elif precision in full_precision:
-            if framework == "torch":
-                return torch.float32
-            elif framework == "numpy":
-                return np.float32
-        else:
-            raise ValueError(
-                f"Unsupported precision: {precision}. Supported values are {half_precision} or {full_precision}."
-            )
+
 
     def _set_output_objects(self):
         """Initialize output objects."""
@@ -212,27 +162,7 @@ class BaseEmbedder:
             ),
         }
 
-    # When changes made here, also update base_embedder.py BaseEmbedder.set_output_objects() method.
-    def _get_output_types(self, args):
-        output_types = []
 
-        options_mapping = {
-            "per_token": "per_token",
-            "mean_pooled": "mean_pooled",
-            "substring_pooled": "substring_pooled",
-            "attention_head": "attention_head",
-            "attention_layer": "attention_layer",
-            "attention_model": "attention_model",
-            "logits": "logits",
-        }
-
-        for option in args.extract_embeddings:
-            if option in options_mapping:
-                output_type = options_mapping[option]
-                if output_type not in output_types:
-                    output_types.append(output_type)
-
-        return output_types
 
     def _make_output_filepath(self, output_type, output_dir, layer=None, head=None):
         base = f"{self.output_prefix}_{self.model_name}_{output_type}"
@@ -260,16 +190,7 @@ class BaseEmbedder:
             self.embedding_size,  # type: ignore
         )
 
-    def _load_substrings(self, substring_path):
-        """Load substrings and store in a dictionary."""
-        if substring_path:
-            with open(substring_path) as f:
-                reader = csv.reader(f)  # skip header
-                next(reader)
-                substring_dict = {rows[0]: rows[1] for rows in reader}
-            return substring_dict
-        else:
-            return None
+
 
     def _safe_compute(self, toks, attention_mask):
         """
