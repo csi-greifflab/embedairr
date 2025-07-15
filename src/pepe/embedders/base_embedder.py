@@ -7,6 +7,7 @@ from numpy.lib.format import open_memmap
 import inspect
 import gc
 from pepe.utils import MultiIODispatcher, check_disk_free_space
+from pepe.embedders.components import EmbeddingProcessor, StreamingIO
 from alive_progress import alive_bar
 import time
 from pathlib import Path
@@ -80,6 +81,22 @@ class BaseEmbedder:
 
         # Set up checkpoint directory for crash recovery
         self.checkpoint_dir = self.output_path
+        
+        # Initialize StreamingIO
+        self.streaming_io = StreamingIO(
+            output_path=self.output_path,
+            output_prefix=self.output_prefix,
+            model_name=self.model_name,
+            output_types=self.output_types,
+            precision=self.precision,
+            streaming_output=self.streaming_output,
+            num_workers=self.num_workers,
+            flush_batches_after=self.flush_batches_after,
+            layers=self.layers,
+            num_heads=getattr(self, 'num_heads', None),
+            flatten=self.flatten,
+            fasta_path=self.fasta_path,
+        )
 
     def _precision_to_dtype(self, precision, framework):
         half_precision = ["float16", "16", "half"]
@@ -226,53 +243,22 @@ class BaseEmbedder:
         return os.path.join(output_dir, base + ".npy")
 
     def preallocate_disk_space(self):
-        memmap_registry = {}
-        total_bytes = 0
+        # Create output data registry for StreamingIO
+        output_data_registry = {}
         for output_type in self.output_types:
-            output_data = getattr(self, output_type)["output_data"]
-            shape = getattr(self, output_type)["shape"]
-            output_dir = getattr(self, output_type)["output_dir"]
-            np_dtype = self._precision_to_dtype(self.precision, "numpy")
-            bytes_per_array = np.dtype(np_dtype).itemsize * np.prod(shape)  # type: ignore
-
-            if isinstance(output_data, dict):
-                for layer in self.layers:  # type: ignore
-                    if isinstance(output_data[layer], dict):  # e.g., all_heads
-                        for head in range(self.num_heads):  # type: ignore
-                            file_path = self._make_output_filepath(
-                                output_type, output_dir, layer, head
-                            )
-                            mode = "r+" if os.path.exists(file_path) else "w+"
-                            output_data[layer][head] = open_memmap(
-                                file_path, mode=mode, dtype=np_dtype, shape=shape
-                            )
-                            memmap_registry[(output_type, layer, head)] = output_data[
-                                layer
-                            ][head]
-                            total_bytes += bytes_per_array
-                    else:
-                        file_path = self._make_output_filepath(
-                            output_type, output_dir, layer
-                        )
-                        mode = "r+" if os.path.exists(file_path) else "w+"
-                        output_data[layer] = open_memmap(
-                            file_path, mode=mode, dtype=np_dtype, shape=shape
-                        )
-                        memmap_registry[(output_type, layer, None)] = output_data[layer]
-                        total_bytes += bytes_per_array
-            else:
-                file_path = self._make_output_filepath(output_type, output_dir)
-                mode = "r+" if os.path.exists(file_path) else "w+"
-                output_array = open_memmap(
-                    file_path, mode=mode, dtype=np_dtype, shape=shape
-                )
-                setattr(getattr(self, output_type), "output_data", output_array)
-                memmap_registry[(output_type, None, None)] = output_array
-                total_bytes += bytes_per_array
-
-        logger.info(f"Preparing to write {total_bytes / 1024**3:.2f} GB to disk.")
-        check_disk_free_space(self.output_path, total_bytes)
-        return memmap_registry
+            output_data_registry[output_type] = {
+                "output_data": getattr(self, output_type)["output_data"],
+                "output_dir": getattr(self, output_type)["output_dir"],
+                "shape": getattr(self, output_type)["shape"],
+            }
+        
+        # Use StreamingIO to preallocate disk space
+        return self.streaming_io.preallocate_disk_space(
+            output_data_registry,
+            self.num_sequences,  # type: ignore
+            self.max_length,
+            self.embedding_size,  # type: ignore
+        )
 
     def _load_substrings(self, substring_path):
         """Load substrings and store in a dictionary."""
@@ -334,16 +320,11 @@ class BaseEmbedder:
 
     def embed(self):
         if self.streaming_output:
-            # Start centralized I/O dispatcher with checkpoint support
-            self.io_dispatcher = MultiIODispatcher(
-                self.memmap_registry,
-                flush_bytes_limit=self.flush_batches_after,
-                heavy_output_type="per_token",
-                checkpoint_dir=self.checkpoint_dir,
-            )
-
+            # Initialize streaming I/O
+            self.streaming_io.initialize_streaming_io()
+            
             # Check if we're resuming from a checkpoint
-            resume_info = self.io_dispatcher.get_resume_info()
+            resume_info = self.streaming_io.get_resume_info()
             if resume_info:
                 logger.info(f"Resuming from checkpoint: {resume_info}")
 
@@ -382,7 +363,7 @@ class BaseEmbedder:
                 }
                 if self.streaming_output:
                     # Apply backpressure if write queue is too full
-                    while self.io_dispatcher.queue_fullness() > 0.6:
+                    while self.streaming_io.get_queue_fullness() > 0.6:
                         logger.warning(
                             "[embed] Backpressure: waiting for IOFlushWorker to catch up..."
                         )
@@ -399,7 +380,7 @@ class BaseEmbedder:
                 bar(len(toks))
 
             if self.streaming_output:
-                self.io_dispatcher.stop()
+                self.streaming_io.stop_streaming()
 
             logger.info("Finished extracting embeddings")
 
@@ -409,17 +390,7 @@ class BaseEmbedder:
 
     def _cleanup_checkpoint(self):
         """Clean up the checkpoint file after successful completion."""
-        checkpoint_file = os.path.join(self.checkpoint_dir, "global_checkpoint.json")
-        if os.path.exists(checkpoint_file):
-            try:
-                os.remove(checkpoint_file)
-                logger.info(f"Cleaned up checkpoint file: {checkpoint_file}")
-            except Exception as e:
-                logger.error(
-                    f"Warning: Could not remove checkpoint file {checkpoint_file}: {e}"
-                )
-        else:
-            logger.info("No checkpoint file found to clean up.")
+        self.streaming_io.cleanup_checkpoint()
 
     def _load_data(self):
         raise NotImplementedError(
@@ -718,59 +689,26 @@ class BaseEmbedder:
         return t.detach().cpu().contiguous().numpy()
 
     def export_to_disk(self):
+        # Create output data registry for StreamingIO
+        output_data_registry = {}
         for output_type in self.output_types:
-            logger.info(f"Saving {output_type} representations...")
-
-            output_data = getattr(self, output_type)["output_data"]
-            output_dir = getattr(self, output_type)["output_dir"]
-
-            if isinstance(output_data, dict):
-                for layer in self.layers:  # type: ignore
-                    if isinstance(output_data[layer], dict):  # e.g., attention_head
-                        for head in range(self.num_heads):  # type: ignore
-                            tensor = self._prepare_tensor(
-                                output_data[layer][head], self.flatten
-                            )
-                            file_path = self._make_output_filepath(
-                                output_type, output_dir, layer, head
-                            )
-                            np.save(file_path, tensor)
-                            logger.info(
-                                f"Saved {output_type} layer {layer} head {head + 1} to {file_path}"
-                            )
-                    else:
-                        # Handle layer-based outputs (mean_pooled, per_token, substring_pooled, attention_layer, logits)
-                        flatten = self.flatten and output_type == "per_token"
-                        tensor = self._prepare_tensor(output_data[layer], flatten)
-                        file_path = self._make_output_filepath(
-                            output_type, output_dir, layer
-                        )
-                        np.save(file_path, tensor)
-                        logger.info(f"Saved {output_type} layer {layer} to {file_path}")
-            else:
-                # Handle model-level outputs (attention_model)
-                tensor = self._prepare_tensor(output_data, self.flatten)
-                file_path = self._make_output_filepath(output_type, output_dir)
-                np.save(file_path, tensor)
-                logger.info(f"Saved {output_type} to {file_path}")
+            output_data_registry[output_type] = {
+                "output_data": getattr(self, output_type)["output_data"],
+                "output_dir": getattr(self, output_type)["output_dir"],
+            }
+        
+        # Use StreamingIO to export to disk
+        self.streaming_io.export_to_disk(
+            output_data_registry,
+            self._prepare_tensor
+        )
 
     def export_sequence_indices(self):
         """Save sequence indices to a CSV file."""
-        input_file_name = os.path.basename(self.fasta_path)
-        # replace file extension with _idx.csv regardless of pattern
-        output_file_name = os.path.splitext(input_file_name)[0] + "_idx.csv"
-        output_file_idx = os.path.join(self.output_path, output_file_name)
-        with open(output_file_idx, "w") as f:
-            f.write("index,sequence_id\n")
-            for i, label in enumerate(self.sequence_labels):
-                f.write(f"{i},{label}\n")
-        logger.info(f"Saved sequence indices to {output_file_idx}")
+        self.streaming_io.export_sequence_indices(self.sequence_labels)
 
     def _create_output_dirs(self):
-        for output_type in self.output_types:
-            output_type_path = os.path.join(self.output_path, output_type)
-            if not os.path.exists(output_type_path):
-                os.makedirs(output_type_path)
+        self.streaming_io.create_output_dirs()
 
     def run(self):
         self._create_output_dirs()
