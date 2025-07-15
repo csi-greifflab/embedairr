@@ -1,5 +1,4 @@
 import argparse
-from pepe.model_selecter import supported_models
 
 
 def str2bool(value):
