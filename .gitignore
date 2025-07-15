@@ -1,3 +1,4 @@
+.cursor
 update_package_name.py
 update_version.py
 src/tests/test_files/test_output
