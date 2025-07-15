@@ -27,6 +27,13 @@ jobs:
         python3 -m pip install --upgrade pip
         pip install build
     
+    - name: Clean build artifacts
+      run: |
+        # Remove any cached files that might interfere with the build
+        find . -name "__pycache__" -type d -exec rm -rf {} + || true
+        find . -name "*.pyc" -type f -delete || true
+        rm -rf dist/ build/ *.egg-info/ src/*.egg-info/ || true
+    
     - name: Verify version for main branch
       run: |
         # Get current version and package name from __init__.py
@@ -48,6 +55,19 @@ jobs:
     
     - name: Build package
       run: python3 -m build
+    
+    - name: Verify build artifacts
+      run: |
+        echo "📦 Build artifacts created:"
+        ls -la dist/
+        echo "📋 File sizes:"
+        du -h dist/*
+        echo "🔍 Checking file integrity:"
+        for file in dist/*; do
+          echo "File: $file"
+          file "$file"
+          echo "SHA256: $(sha256sum "$file" | cut -d' ' -f1)"
+        done
     
     - name: Publish to PyPI (Trusted Publishing)
       uses: pypa/gh-action-pypi-publish@release/v1
