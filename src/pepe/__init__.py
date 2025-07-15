@@ -2,7 +2,7 @@ import logging
 import sys
 
 # Package metadata - single source of truth
-__version__ = "1.0.2"
+__version__ = "1.0.4.dev0"
 __package_name__ = "pepe-cli"
 __module_name__ = "pepe"
 __author__ = "Jahn Zhong"
