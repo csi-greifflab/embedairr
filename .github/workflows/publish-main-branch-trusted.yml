@@ -166,8 +166,6 @@ jobs:
           pip install pepe_cli-${{ steps.get_version.outputs.version }}-py3-none-any.whl
           ```
           
-          ## Changes
-          See [CHANGELOG.md](CHANGELOG.md) for details.
         files: |
           dist/*.whl
           dist/*.tar.gz
