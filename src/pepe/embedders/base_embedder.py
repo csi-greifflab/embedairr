@@ -11,6 +11,19 @@ from alive_progress import alive_bar
 import time
 from pathlib import Path
 import logging
+from pepe.embedder_utils import (
+    precision_to_dtype,
+    mask_special_tokens,
+    extract_logits,
+    extract_mean_pooled,
+    extract_per_token,
+    extract_attention_head,
+    extract_attention_layer,
+    extract_attention_model,
+    extract_substring_pooled,
+    prepare_tensor,
+    to_numpy,
+)
 
 logger = logging.getLogger("src.embedders.base_embedder")
 
@@ -82,29 +95,15 @@ class BaseEmbedder:
         self.checkpoint_dir = self.output_path
 
     def _precision_to_dtype(self, precision, framework):
-        half_precision = ["float16", "16", "half"]
-        full_precision = ["float32", "32", "full"]
-        if precision in half_precision:
-            if framework == "torch":
-                return torch.float16
-            elif framework == "numpy":
-                return np.float16
-        elif precision in full_precision:
-            if framework == "torch":
-                return torch.float32
-            elif framework == "numpy":
-                return np.float32
-        else:
-            raise ValueError(
-                f"Unsupported precision: {precision}. Supported values are {half_precision} or {full_precision}."
-            )
+        return precision_to_dtype(precision, framework)
+
 
     def _set_output_objects(self):
         """Initialize output objects."""
         self.sequence_labels = []
         self.logits = {
             "output_data": {layer: [] for layer in self.layers},  # type: ignore
-            "method": self._extract_logits,
+            "method": extract_logits,
             "output_dir": os.path.join(self.output_path, "logits"),
             "shape": (
                 self.num_sequences,  # type: ignore
@@ -113,13 +112,13 @@ class BaseEmbedder:
         }
         self.mean_pooled = {
             "output_data": {layer: [] for layer in self.layers},  # type: ignore
-            "method": self._extract_mean_pooled,
+            "method": extract_mean_pooled,
             "output_dir": os.path.join(self.output_path, "mean_pooled"),
             "shape": (self.num_sequences, self.embedding_size),  # type: ignore
         }
         self.per_token = {
             "output_data": {layer: [] for layer in self.layers},  # type: ignore
-            "method": self._extract_per_token,
+            "method": extract_per_token,
             "output_dir": os.path.join(self.output_path, "per_token"),
             "shape": (
                 (
@@ -136,7 +135,7 @@ class BaseEmbedder:
         }
         self.substring_pooled = {
             "output_data": {layer: [] for layer in self.layers},  # type: ignore
-            "method": self._extract_substring_pooled,
+            "method": extract_substring_pooled,
             "output_dir": os.path.join(self.output_path, "substring_pooled"),
             "shape": (self.num_sequences, self.embedding_size),  # type: ignore
         }
@@ -145,7 +144,7 @@ class BaseEmbedder:
                 layer: {head: [] for head in range(self.num_heads)}  # type: ignore
                 for layer in self.layers  # type: ignore
             },
-            "method": self._extract_attention_head,
+            "method": extract_attention_head,
             "output_dir": os.path.join(self.output_path, "attention_head"),
             "shape": (
                 (
@@ -162,7 +161,7 @@ class BaseEmbedder:
         }
         self.attention_layer = {
             "output_data": {layer: [] for layer in self.layers},  # type: ignore
-            "method": self._extract_attention_layer,
+            "method": extract_attention_layer,
             "output_dir": os.path.join(self.output_path, "attention_layer"),
             "shape": (
                 (
@@ -179,7 +178,7 @@ class BaseEmbedder:
         }
         self.attention_model = {
             "output_data": [],
-            "method": self._extract_attention_model,
+            "method": extract_attention_model,
             "output_dir": os.path.join(self.output_path, "attention_model"),
             "shape": (
                 (
@@ -232,7 +231,7 @@ class BaseEmbedder:
             output_data = getattr(self, output_type)["output_data"]
             shape = getattr(self, output_type)["shape"]
             output_dir = getattr(self, output_type)["output_dir"]
-            np_dtype = self._precision_to_dtype(self.precision, "numpy")
+            np_dtype = precision_to_dtype(self.precision, "numpy")
             bytes_per_array = np.dtype(np_dtype).itemsize * np.prod(shape)  # type: ignore
 
             if isinstance(output_data, dict):
@@ -362,9 +361,9 @@ class BaseEmbedder:
                 toks = toks.to(self.device, non_blocking=True)
                 if attention_mask is not None:
                     attention_mask = attention_mask.to(self.device, non_blocking=True)
-                pooling_mask = self._mask_special_tokens(
+                pooling_mask = mask_special_tokens(
                     toks, self.special_tokens  # type: ignore
-                ).cpu()  # mask special tokens to avoid diluting signal when pooling embeddings
+                ).cpu()
                 logits, representations, attention_matrices = self._safe_compute(
                     toks, attention_mask
                 )
@@ -458,264 +457,19 @@ class BaseEmbedder:
 
         return start, end
 
-    def _extract_batch(
-        self,
-        output_bundle,
-    ):
+    def _extract_batch(self, output_bundle):
         for output_type in self.output_types:
-            sig = inspect.signature(getattr(self, output_type)["method"])
-            needed_args = {
-                k: v for k, v in output_bundle.items() if k in sig.parameters
-            }
-            getattr(self, output_type)["method"](**needed_args)
+            func = getattr(self, output_type)["method"]
+            sig = inspect.signature(func)
+            needed_args = {k: v for k, v in output_bundle.items() if k in sig.parameters}
+            func(self, **needed_args)
         # clear the output bundle to free up memory
         output_bundle.clear()
         del output_bundle
         torch.cuda.empty_cache()
 
-    def _mask_special_tokens(self, input_tensor, special_tokens=None):
-        """
-        Create a boolean mask for special tokens in the input tensor.
 
-        """
-        if (
-            special_tokens is not None
-        ):  # Create a boolean mask: True where the value is not in special_tokens.
-            mask = ~torch.isin(input_tensor, special_tokens)
-        else:  # Create a boolean mask: True where the value is not 0, 1, or 2.
-            mask = (input_tensor != 0) & (input_tensor != 1) & (input_tensor != 2)
-        # Convert and return the boolean mask to boolean type.
-        return mask
 
-    def _extract_logits(
-        self,
-        logits,
-        offset,
-    ):
-        for layer in self.layers:  # type: ignore
-            tensor = logits[layer - 1]
-            if self.streaming_output:
-                # output_file = self.logits["output_data"][layer]
-                # self.write_batch_to_disk(output_file, tensor, offset)
-
-                self.io_dispatcher.enqueue(
-                    output_type="logits",
-                    layer=layer,
-                    head=None,
-                    offset=offset,
-                    array=self._to_numpy(tensor),  # Ensure it's on CPU and NumPy
-                )
-            else:
-                self.logits["output_data"][layer].extend(tensor)
-
-    def _extract_mean_pooled(
-        self,
-        representations,
-        batch_labels,
-        pooling_mask,
-        offset,
-    ):
-        for layer in self.layers:  # type: ignore
-            tensor = torch.stack(
-                [
-                    (
-                        (pooling_mask[i].unsqueeze(-1) * representations[layer][i]).sum(
-                            0
-                        )
-                        / pooling_mask[i].unsqueeze(-1).sum(0)
-                    )
-                    for i in range(len(batch_labels))
-                ]
-            )
-            if self.streaming_output:
-                # output_file = self.embeddings["output_data"][layer]
-                # self.write_batch_to_disk(output_file, tensor, offset)
-                self.io_dispatcher.enqueue(
-                    output_type="mean_pooled",
-                    layer=layer,
-                    head=None,
-                    offset=offset,
-                    array=self._to_numpy(tensor),  # Ensure it's on CPU and NumPy
-                )
-            else:
-                self.mean_pooled["output_data"][layer].extend(tensor)
-
-    def _extract_per_token(
-        self,
-        representations,
-        batch_labels,
-        offset,
-    ):
-        if not self.discard_padding:
-            for layer in self.layers:  # type: ignore
-                tensor = torch.stack(
-                    [representations[layer][i] for i in range(len(batch_labels))]
-                )
-                if self.flatten:
-                    tensor = tensor.flatten(start_dim=1)
-                if self.streaming_output:
-                    # output_file = self.per_token["output_data"][layer]
-                    # self.write_batch_to_disk(output_file, tensor, offset)
-                    self.io_dispatcher.enqueue(
-                        output_type="per_token",
-                        layer=layer,
-                        head=None,
-                        offset=offset,
-                        array=np.ascontiguousarray(
-                            tensor.cpu().numpy()
-                        ),  # Ensure it's on CPU and NumPy
-                    )
-                else:
-                    self.per_token["output_data"][layer].extend(tensor)
-        else:  # TODO remove padding tokens
-            logger.warning("Feature not implemented yet")
-            pass
-            for layer in self.layers:  # type: ignore
-                if self.flatten:
-                    self.per_token["output_data"][layer].extend(
-                        [
-                            representations[layer][i].flatten(start_dim=1)
-                            for i in range(len(batch_labels))
-                        ]
-                    )
-                else:
-                    self.per_token["output_data"][layer].extend(
-                        [representations[layer][i] for i in range(len(batch_labels))]
-                    )
-
-    def _extract_attention_head(
-        self,
-        attention_matrices,
-        batch_labels,
-        offset,
-    ):
-        for layer in self.layers:  # type: ignore
-            for head in range(self.num_heads):  # type: ignore
-                tensor = torch.stack(
-                    [
-                        attention_matrices[layer - 1, i, head]
-                        for i in range(len(batch_labels))
-                    ]
-                )
-                if self.flatten:
-                    tensor = tensor.flatten(start_dim=1)
-                if self.streaming_output:
-                    # output_file = self.attention_matrices_all_heads["output_data"][
-                    #    layer
-                    # ][head]
-                    # self.write_batch_to_disk(output_file, tensor, offset)
-                    self.io_dispatcher.enqueue(
-                        output_type="attention_matrices_all_heads",
-                        layer=layer,
-                        head=head,
-                        offset=offset,
-                        array=np.ascontiguousarray(
-                            tensor.cpu().numpy()
-                        ),  # Ensure it's on CPU and NumPy
-                    )
-                else:
-                    self.attention_head["output_data"][layer][
-                        head
-                    ].extend(tensor)
-
-    def _extract_attention_layer(
-        self,
-        attention_matrices,
-        batch_labels,
-        offset,
-    ):
-        for layer in self.layers:  # type: ignore
-            tensor = torch.stack(
-                [
-                    attention_matrices[layer - 1, i].mean(0)
-                    for i in range(len(batch_labels))
-                ]
-            )
-            if self.flatten:
-                tensor = tensor.flatten(start_dim=1)
-            if self.streaming_output:
-                # output_file = self.attention_matrices_average_layers["output_data"][
-                #    layer
-                # ]
-                # self.write_batch_to_disk(output_file, tensor, offset)
-                self.io_dispatcher.enqueue(
-                    output_type="attention_matrices_average_layers",
-                    layer=layer,
-                    head=None,
-                    offset=offset,
-                    array=self._to_numpy(tensor),  # Ensure it's on CPU and NumPy
-                )
-            else:
-                self.attention_layer["output_data"][layer].extend(
-                    tensor
-                )
-
-    def _extract_attention_model(
-        self,
-        attention_matrices,
-        batch_labels,
-        offset,
-    ):
-        tensor = torch.stack(
-            [
-                attention_matrices[:, i].mean(dim=(0, 1))
-                for i in range(len(batch_labels))
-            ]
-        )
-        if self.flatten:
-            tensor = tensor.flatten(start_dim=1)
-        if self.streaming_output:
-            # output_file = self.attention_matrices_average_all["output_data"]
-            # self.write_batch_to_disk(output_file, tensor, offset)
-            self.io_dispatcher.enqueue(
-                output_type="attention_matrices_average_all",
-                layer=None,
-                head=None,
-                offset=offset,
-                array=np.ascontiguousarray(
-                    tensor.cpu().numpy()
-                ),  # Ensure it's on CPU and NumPy
-            )
-        else:
-            self.attention_model["output_data"].extend(tensor)
-
-    def _extract_substring_pooled(
-        self,
-        representations,
-        substring_mask,
-        offset,
-    ):
-        for layer in self.layers:  # type: ignore
-            tensor = torch.stack(
-                [
-                    (
-                        (mask.unsqueeze(-1) * representations[layer][i]).sum(0)
-                        / mask.unsqueeze(-1).sum(0)
-                    )
-                    for i, mask in enumerate(substring_mask)
-                ]
-            )
-            if self.streaming_output:
-                # output_file = self.substring_pooled["output_data"][layer]
-                # self.write_batch_to_disk(output_file, tensor, offset)
-                self.io_dispatcher.enqueue(
-                    output_type="substring_pooled",
-                    layer=layer,
-                    head=None,
-                    offset=offset,
-                    array=self._to_numpy(tensor),  # Ensure it's on CPU and NumPy
-                )
-            else:
-                self.substring_pooled["output_data"][layer].extend(tensor)
-
-    def _prepare_tensor(self, data_list, flatten):
-        tensor = torch.stack(data_list, dim=0)
-        if flatten:
-            tensor = tensor.flatten(start_dim=1)
-        return tensor.numpy()
-
-    def _to_numpy(self, t: torch.Tensor) -> np.ndarray:
-        return t.detach().cpu().contiguous().numpy()
 
     def export_to_disk(self):
         for output_type in self.output_types:
@@ -728,7 +482,7 @@ class BaseEmbedder:
                 for layer in self.layers:  # type: ignore
                     if isinstance(output_data[layer], dict):  # e.g., attention_head
                         for head in range(self.num_heads):  # type: ignore
-                            tensor = self._prepare_tensor(
+                            tensor = prepare_tensor(
                                 output_data[layer][head], self.flatten
                             )
                             file_path = self._make_output_filepath(
@@ -741,7 +495,7 @@ class BaseEmbedder:
                     else:
                         # Handle layer-based outputs (mean_pooled, per_token, substring_pooled, attention_layer, logits)
                         flatten = self.flatten and output_type == "per_token"
-                        tensor = self._prepare_tensor(output_data[layer], flatten)
+                        tensor = prepare_tensor(output_data[layer], flatten)
                         file_path = self._make_output_filepath(
                             output_type, output_dir, layer
                         )
@@ -749,7 +503,7 @@ class BaseEmbedder:
                         logger.info(f"Saved {output_type} layer {layer} to {file_path}")
             else:
                 # Handle model-level outputs (attention_model)
-                tensor = self._prepare_tensor(output_data, self.flatten)
+                tensor = prepare_tensor(output_data, self.flatten)
                 file_path = self._make_output_filepath(output_type, output_dir)
                 np.save(file_path, tensor)
                 logger.info(f"Saved {output_type} to {file_path}")

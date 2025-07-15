@@ -545,7 +545,10 @@ class DefaultProteinTokenizer:
         return tokenized[0] if len(tokenized) == 1 else tokenized
 
 
-class CustomDataset(pepe.utils.SequenceDictDataset):
+from pepe.datasets import SequenceDictDataset
+
+
+class CustomDataset(SequenceDictDataset):
     """
     Dataset class for custom embedder.
     """
