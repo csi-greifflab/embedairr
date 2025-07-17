@@ -3,6 +3,28 @@ from pepe.embedders.custom_embedder import CustomEmbedder
 import os
 
 
+def _is_huggingface_model(model_name):
+    """Check if a model name/path refers to a HuggingFace model."""
+    # Skip if it's clearly a local PyTorch file
+    if model_name.endswith((".pt", ".pth")) or model_name.startswith("custom:"):
+        return False
+    
+    # Check if it's a local directory with HuggingFace model files
+    if os.path.exists(model_name) and os.path.isdir(model_name):
+        # Check for common HuggingFace model files
+        hf_files = ["config.json", "pytorch_model.bin", "model.safetensors"]
+        if any(os.path.exists(os.path.join(model_name, f)) for f in hf_files):
+            return True
+    
+    # Try to load config to see if it's a valid HuggingFace model
+    try:
+        from transformers import AutoConfig
+        AutoConfig.from_pretrained(model_name)
+        return True
+    except:
+        return False
+
+
 def _get_esm_embedder():
     """Lazy import of ESM embedder to avoid loading heavy dependencies."""
     from pepe.embedders.esm_embedder import ESMEmbedder
@@ -12,9 +34,9 @@ def _get_esm_embedder():
 
 def _get_huggingface_embedders():
     """Lazy import of HuggingFace embedders to avoid loading heavy dependencies."""
-    from pepe.embedders.huggingface_embedder import T5Embedder, Antiberta2Embedder
+    from pepe.embedders.huggingface_embedder import T5Embedder, Antiberta2Embedder, GenericHuggingFaceEmbedder
 
-    return T5Embedder, Antiberta2Embedder
+    return T5Embedder, Antiberta2Embedder, GenericHuggingFaceEmbedder
 
 
 def select_model(model_name):
@@ -38,8 +60,8 @@ def select_model(model_name):
         )
     ):
         return CustomEmbedder
-    elif "/" in model_name:
-        # Assume it's a Hugging Face model (username/model-name format)
+    elif "/" in model_name or _is_huggingface_model(model_name):
+        # Assume it's a Hugging Face model (username/model-name format or local model)
         # Try to determine the architecture automatically
         try:
             from transformers import AutoConfig
@@ -47,35 +69,33 @@ def select_model(model_name):
             config = AutoConfig.from_pretrained(model_name)
             model_type = config.model_type.lower()
 
+            # Use specific embedders for known architectures
             if model_type in ["t5", "mt5"]:
-                T5Embedder, Antiberta2Embedder = _get_huggingface_embedders()
+                T5Embedder, Antiberta2Embedder, GenericHuggingFaceEmbedder = _get_huggingface_embedders()
                 return T5Embedder
             elif model_type in ["roformer"]:
-                T5Embedder, Antiberta2Embedder = _get_huggingface_embedders()
+                T5Embedder, Antiberta2Embedder, GenericHuggingFaceEmbedder = _get_huggingface_embedders()
                 return Antiberta2Embedder
-            elif model_type in ["bert"]:
-                # For BERT-like models, we could potentially use a generic embedder
-                # but for now, suggest using CustomEmbedder or creating a specific one
-                raise ValueError(
-                    f"BERT-like models are not yet directly supported. Consider using a PyTorch version of the model with CustomEmbedder."
-                )
             else:
-                # For other architectures, you might want to add more specific embedders
-                # or use a generic HuggingfaceEmbedder
-                raise ValueError(
-                    f"Model architecture '{model_type}' not yet supported for custom Hugging Face models"
-                )
+                # For all other architectures, use the generic embedder
+                T5Embedder, Antiberta2Embedder, GenericHuggingFaceEmbedder = _get_huggingface_embedders()
+                return GenericHuggingFaceEmbedder
         except Exception as e:
-            # Check if it's a Keras/TensorFlow model
+            # If we can't load the config, try the generic embedder as a fallback
             error_msg = str(e)
             if "Unrecognized model" in error_msg or "model_type" in error_msg:
                 raise ValueError(
                     f"Model {model_name} appears to be a Keras/TensorFlow model or has an unsupported architecture. EmbedAIRR currently supports PyTorch models only. Consider using a PyTorch version or converting the model."
                 )
             else:
-                raise ValueError(
-                    f"Could not determine model architecture for {model_name}: {e}"
-                )
+                # Try generic embedder as fallback
+                try:
+                    T5Embedder, Antiberta2Embedder, GenericHuggingFaceEmbedder = _get_huggingface_embedders()
+                    return GenericHuggingFaceEmbedder
+                except Exception as fallback_e:
+                    raise ValueError(
+                        f"Could not determine model architecture for {model_name} and generic fallback failed. Original error: {e}. Fallback error: {fallback_e}"
+                    )
     else:
         raise ValueError(f"Model {model_name} not supported")
 
