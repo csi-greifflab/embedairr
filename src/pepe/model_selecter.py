@@ -12,9 +12,9 @@ def _get_esm_embedder():
 
 def _get_huggingface_embedders():
     """Lazy import of HuggingFace embedders to avoid loading heavy dependencies."""
-    from pepe.embedders.huggingface_embedder import T5Embedder, Antiberta2Embedder
+    from pepe.embedders.huggingface_embedder import T5Embedder, Antiberta2Embedder, GenericHuggingFaceEmbedder
 
-    return T5Embedder, Antiberta2Embedder
+    return T5Embedder, Antiberta2Embedder, GenericHuggingFaceEmbedder
 
 
 def select_model(model_name):
@@ -44,27 +44,39 @@ def select_model(model_name):
         try:
             from transformers import AutoConfig
 
-            config = AutoConfig.from_pretrained(model_name)
+            # For models that commonly require custom code, use trust_remote_code=True immediately
+            requires_custom_code = any(pattern in model_name.lower() for pattern in [
+                'progen', 'protgpt', 'esm-fold', 'esmfold', 'alphafold'
+            ])
+            
+            if requires_custom_code:
+                config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+            else:
+                # Try without trust_remote_code first, then with it if needed
+                try:
+                    config = AutoConfig.from_pretrained(model_name)
+                except (OSError, ValueError) as e:
+                    # If the model requires custom code, try with trust_remote_code=True
+                    if "trust_remote_code" in str(e).lower() or "custom code" in str(e).lower():
+                        config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+                    else:
+                        raise
             model_type = config.model_type.lower()
 
             if model_type in ["t5", "mt5"]:
-                T5Embedder, Antiberta2Embedder = _get_huggingface_embedders()
+                from pepe.embedders.huggingface_embedder import T5Embedder
                 return T5Embedder
             elif model_type in ["roformer"]:
-                T5Embedder, Antiberta2Embedder = _get_huggingface_embedders()
+                T5Embedder, Antiberta2Embedder, GenericHuggingFaceEmbedder = _get_huggingface_embedders()
                 return Antiberta2Embedder
             elif model_type in ["bert"]:
-                # For BERT-like models, we could potentially use a generic embedder
-                # but for now, suggest using CustomEmbedder or creating a specific one
-                raise ValueError(
-                    f"BERT-like models are not yet directly supported. Consider using a PyTorch version of the model with CustomEmbedder."
-                )
+                # For BERT-like models, use the generic embedder
+                T5Embedder, Antiberta2Embedder, GenericHuggingFaceEmbedder = _get_huggingface_embedders()
+                return GenericHuggingFaceEmbedder
             else:
-                # For other architectures, you might want to add more specific embedders
-                # or use a generic HuggingfaceEmbedder
-                raise ValueError(
-                    f"Model architecture '{model_type}' not yet supported for custom Hugging Face models"
-                )
+                # For other architectures, use the generic embedder
+                T5Embedder, Antiberta2Embedder, GenericHuggingFaceEmbedder = _get_huggingface_embedders()
+                return GenericHuggingFaceEmbedder
         except Exception as e:
             # Check if it's a Keras/TensorFlow model
             error_msg = str(e)
