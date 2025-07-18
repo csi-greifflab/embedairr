@@ -448,13 +448,8 @@ class BaseEmbedder:
         substring = substring.replace("-", "")
 
         # get position of substring in sequence
-        start = max(full_sequence.find(substring) - context, 0) + int(
-            special_tokens
-        )
-        end = (
-            min(start + len(substring) + context, len(full_sequence))
-            + special_tokens
-        )
+        start = max(full_sequence.find(substring) - context, 0) + int(special_tokens)
+        end = min(start + len(substring) + context, len(full_sequence)) + special_tokens
 
         return start, end
 
@@ -605,7 +600,7 @@ class BaseEmbedder:
                     # ][head]
                     # self.write_batch_to_disk(output_file, tensor, offset)
                     self.io_dispatcher.enqueue(
-                        output_type="attention_matrices_all_heads",
+                        output_type="attention_head",
                         layer=layer,
                         head=head,
                         offset=offset,
@@ -614,9 +609,7 @@ class BaseEmbedder:
                         ),  # Ensure it's on CPU and NumPy
                     )
                 else:
-                    self.attention_head["output_data"][layer][
-                        head
-                    ].extend(tensor)
+                    self.attention_head["output_data"][layer][head].extend(tensor)
 
     def _extract_attention_layer(
         self,
@@ -639,16 +632,14 @@ class BaseEmbedder:
                 # ]
                 # self.write_batch_to_disk(output_file, tensor, offset)
                 self.io_dispatcher.enqueue(
-                    output_type="attention_matrices_average_layers",
+                    output_type="attention_layer",
                     layer=layer,
                     head=None,
                     offset=offset,
                     array=self._to_numpy(tensor),  # Ensure it's on CPU and NumPy
                 )
             else:
-                self.attention_layer["output_data"][layer].extend(
-                    tensor
-                )
+                self.attention_layer["output_data"][layer].extend(tensor)
 
     def _extract_attention_model(
         self,
@@ -668,7 +659,7 @@ class BaseEmbedder:
             # output_file = self.attention_matrices_average_all["output_data"]
             # self.write_batch_to_disk(output_file, tensor, offset)
             self.io_dispatcher.enqueue(
-                output_type="attention_matrices_average_all",
+                output_type="attention_model",
                 layer=None,
                 head=None,
                 offset=offset,

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 pepe \
     --experiment_name "test" \
-    --model_name "examples/custom_model/example_protein_model" \
+    --model_name 'hugohrban/progen2-small' \
     --fasta_path "src/tests/test_files/test.fasta" \
     --output_path "src/tests/test_files/test_output" \
     --substring_path "src/tests/test_files/test_substring.csv" \
