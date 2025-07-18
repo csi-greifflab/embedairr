@@ -7,7 +7,7 @@ import time
 import gc
 import os
 import json
-from transformers import RoFormerTokenizer
+from transformers import RoFormerTokenizer, T5Tokenizer
 import threading, queue
 from alive_progress import alive_bar
 import shutil
@@ -43,7 +43,7 @@ class TokenBudgetBatchSampler:
 
 
 class SequenceDictDataset(Dataset):
-    def __init__(self, sequences, substring_dict, context):
+    def __init__(self, sequences, substring_dict, context, bracket_type = "square"):
         self.data = list(sequences.items())  # (label, seq)
         if substring_dict:
             self.substring_dict = substring_dict
@@ -53,7 +53,7 @@ class SequenceDictDataset(Dataset):
             self.substring_dict = None
             self.context = None
             self.filtered_substring_data = None
-        pass
+        self.bracket_type = bracket_type
 
     def __getitem__(self, idx):
         return self.data[idx]
@@ -128,13 +128,15 @@ class HuggingFaceDataset(SequenceDictDataset):
         sequences,
         substring_dict,
         context,
+        bracket_type,
         tokenizer,
         max_length,
         add_special_tokens=True,
     ):
-        super().__init__(sequences, substring_dict, context)
+        super().__init__(sequences, substring_dict, context, bracket_type)
+        
         self.encoded_data = self._encode_sequences(
-            self.data, tokenizer, max_length, add_special_tokens
+            self.data, tokenizer, max_length, add_special_tokens, gapped_sequences = True
         )  # (label, seq, toks, attention_mask)
         self.pad_token_id = tokenizer.pad_token_type_id
         if self.substring_dict:
@@ -144,16 +146,14 @@ class HuggingFaceDataset(SequenceDictDataset):
                 tokenizer,
                 "max_length",
                 add_special_tokens=False,
+                gapped_sequences=True
             )  # (label, seq, toks, attention_mask)
             self.substring_masks = self._get_substring_masks()
 
-    def _encode_sequences(self, data, tokenizer, max_length, add_special_tokens):
+    def _encode_sequences(self, data, tokenizer, max_length, add_special_tokens, gapped_sequences = True):
         labels, strs = zip(*data)
-        if isinstance(tokenizer, RoFormerTokenizer):
-            # RoFormerTokenizer requires space-separated tokenization
-            # for the input sequences
-            logger.info("Using RoFormerTokenizer, applying gap_sequence.")
-            strs = self._gap_sequence(strs)
+        if gapped_sequences:
+            strs = gap_sequence(strs, self.bracket_type)
             max_token_length = max(len(seq.split(" ")) for seq in strs)
         else:
             # For other tokenizers, use the default tokenization
@@ -186,11 +186,6 @@ class HuggingFaceDataset(SequenceDictDataset):
         toks = torch.cat(loop_input_ids, dim=0)
         attention_masks = torch.cat(loop_attention_mask, dim=0)
         return list(zip(labels, strs, list(toks), list(attention_masks)))
-
-    def _gap_sequence(self, sequences: Sequence[str]) -> Sequence[str]:
-        """Space-separated tokenization for RoFormer input."""
-        seqs = [" ".join(re.findall(r"\[.*?\]|.", sequence)) for sequence in sequences]
-        return seqs
 
     def get_max_encoded_length(self):
         return max(len(toks) for _, _, toks, _ in self.encoded_data)
@@ -319,21 +314,135 @@ class ESMDataset(SequenceDictDataset):
         else:
             return labels, seqs, toks, None, None
 
+class CustomDataset(SequenceDictDataset):
+    """
+    Dataset class for custom embedder.
+    """
 
-def check_input_tokens(valid_tokens, sequences, model_name):
+    def __init__(
+        self,
+        sequences,
+        substring_dict,
+        context,
+        tokenizer,
+        max_length,
+        add_special_tokens=True,
+        gapped_sequences = True,
+    ):
+        super().__init__(sequences, substring_dict, context)
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+        self.add_special_tokens = add_special_tokens
+        self.pad_token_id = getattr(tokenizer, "pad_token_id", 0)
+        self.gapped_sequences = gapped_sequences
+
+        # Encode sequences
+        self.encoded_data = self._encode_sequences(
+            self.data, tokenizer, max_length, add_special_tokens, self.gapped_sequences
+        )
+
+        # Handle substring sequences if provided
+        if self.substring_dict:
+            logger.info("Tokenizing substrings...")
+            self.encoded_substring_data = self._encode_sequences(
+                self.filtered_substring_data,
+                tokenizer,
+                "max_length",
+                add_special_tokens=False,
+            )
+            self.substring_masks = self._get_substring_masks()
+
+    def _encode_sequences(self, data, tokenizer, max_length, add_special_tokens, gapped_sequences = True):
+        """Encode sequences using the tokenizer."""
+        labels, strs = zip(*data)
+
+        if gapped_sequences:
+            strs = gap_sequence(strs)
+            max_token_length = max(len(seq.split(" ")) for seq in strs)
+        else:
+            # For other tokenizers, use the default tokenization
+            max_token_length = max(len(seq) for seq in strs)
+
+        # Convert max_length to int if needed
+        if max_length == "max_length":
+            max_token_length = max(len(s) for s in strs) + (2 if add_special_tokens else 0)
+
+        encoded_sequences = []
+        for label, seq in zip(labels, strs):
+            # Tokenize the sequence
+            tokens = tokenizer(
+                seq,
+                truncation=True,
+                padding="max_length",
+                max_length=max_token_length,
+                add_special_tokens=add_special_tokens,
+                return_tensors="pt",
+            )
+
+            encoded_sequences.append(
+                (
+                    label,
+                    seq,
+                    tokens["input_ids"].squeeze(0),
+                    tokens["attention_mask"].squeeze(0),
+                )
+            )
+
+        return encoded_sequences
+
+    def get_max_encoded_length(self):
+        """Get maximum encoded sequence length."""
+        return max(len(toks) for _, _, toks, _ in self.encoded_data)
+
+    def safe_collate(self, batch):
+        """Collate function for data loader."""
+        if self.substring_dict:
+            labels, seqs, toks, attn_masks, substring_masks = zip(*batch)
+            return (
+                list(labels),
+                list(seqs),
+                torch.stack(toks),
+                torch.stack(attn_masks),
+                torch.stack(substring_masks),
+            )
+        else:
+            labels, seqs, toks, attn_masks = zip(*batch)
+            return (
+                list(labels),
+                list(seqs),
+                torch.stack(toks),
+                torch.stack(attn_masks),
+                None,
+            )
+
+    def __getitem__(self, idx):
+        """Get item from dataset."""
+        labels, seqs, toks, attn_mask = self.encoded_data[idx]
+        if self.substring_dict:
+            substring_masks = self.substring_masks[idx]
+            return labels, seqs, toks, attn_mask, substring_masks
+        else:
+            return labels, seqs, toks, attn_mask
+
+def check_input_tokens(valid_tokens, sequences, model_name, bracket_type = "square"):
+    def __str_to_list(sequence, bracket_type = "square"):
+        if bracket_type == "square":
+            return re.findall(r"\[.*?\]|.", sequence)
+        elif bracket_type == "angle":
+            return re.findall(r"<.*?>|.", sequence)
+        else:
+            raise ValueError(f"Invalid bracket type: {bracket_type}")
+
     with alive_bar(
         len(sequences), title="Checking input sequences for invalid tokens..."
     ) as bar:
         for label, sequence in sequences.items():
-            if "esm" not in model_name:
-                sequence = re.findall(r"\[.*?\]|.", sequence)
-                if "antiberta" in model_name:  # check for longest sequence
-                    assert (
-                        len(sequence) <= 256
-                    ), f"Antiberta2 does not support sequences longer than 256 tokens. Found {len(sequence)} tokens in sequence {label}."
+            sequence = __str_to_list(sequence, bracket_type)
+            if "antiberta" in model_name:  # check for longest sequence
+                assert (
+                    len(sequence) <= 256
+                ), f"Antiberta2 does not support sequences longer than 256 tokens. Found {len(sequence)} tokens in sequence {label}."
 
-            else:
-                sequence = re.findall(r"<.*?>|.", sequence)
             if not set(sequence).issubset(valid_tokens):
                 raise ValueError(
                     f"Invalid tokens found in sequence {label}: {set(sequence) - set(valid_tokens)}"
@@ -365,7 +474,25 @@ def fasta_to_dict(fasta_path):
     flush()
 
     return seq_dict
-
+def get_bracket_type(tokenizer):
+    try:
+        special_token_bracket = tokenizer.special_tokens_map["additional_special_tokens"][0][0]
+    except KeyError:
+        special_token_bracket = tokenizer.all_special_tokens[0][0]
+    if special_token_bracket == "<":
+        return "angle"
+    elif special_token_bracket == "[":
+        return "square"
+    else:
+        raise ValueError(f"Invalid special token bracket: {special_token_bracket}")
+def gap_sequence(sequences: Sequence[str], bracket_type = "square") -> Sequence[str]:
+    if bracket_type == "square":
+        seqs = [" ".join(re.findall(r"\[.*?\]|.", sequence)) for sequence in sequences]
+    elif bracket_type == "angle":
+        seqs = [" ".join(re.findall(r"<.*?>|.", sequence)) for sequence in sequences]
+    else:
+        raise ValueError(f"Invalid bracket type: {bracket_type}")
+    return seqs
 
 def flush_memmaps(obj):
     """Recursively flush memory maps."""

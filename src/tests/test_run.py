@@ -10,7 +10,7 @@ sys.argv = [
     "--experiment_name",
     "test",
     "--model_name",
-    "/home/jahn/embedairr/examples/custom_model/example_protein_model",
+    "ZYMScott/antiberty",
     "--fasta_path",
     "src/tests/test_files/test.fasta",
     "--output_path",

@@ -54,7 +54,7 @@ class CustomEmbedder(BaseEmbedder):
         # Set up tokenizer and validate tokens
         self.valid_tokens = self._get_valid_tokens()
         pepe.utils.check_input_tokens(
-            self.valid_tokens, self.sequences, self.model_name
+            self.valid_tokens, self.sequences, self.model_name, 
         )
 
         # Set up special tokens
@@ -300,7 +300,7 @@ class CustomEmbedder(BaseEmbedder):
     def _load_data(self, sequences, substring_dict=None):
         """Load and tokenize sequences."""
         # Create dataset
-        dataset = CustomDataset(
+        dataset = pepe.utils.CustomDataset(
             sequences,
             substring_dict,
             self.context,
@@ -543,105 +543,3 @@ class DefaultProteinTokenizer:
             }
 
         return tokenized[0] if len(tokenized) == 1 else tokenized
-
-
-class CustomDataset(pepe.utils.SequenceDictDataset):
-    """
-    Dataset class for custom embedder.
-    """
-
-    def __init__(
-        self,
-        sequences,
-        substring_dict,
-        context,
-        tokenizer,
-        max_length,
-        add_special_tokens=True,
-    ):
-        super().__init__(sequences, substring_dict, context)
-        self.tokenizer = tokenizer
-        self.max_length = max_length
-        self.add_special_tokens = add_special_tokens
-        self.pad_token_id = getattr(tokenizer, "pad_token_id", 0)
-
-        # Encode sequences
-        self.encoded_data = self._encode_sequences(
-            self.data, tokenizer, max_length, add_special_tokens
-        )
-
-        # Handle substring sequences if provided
-        if self.substring_dict:
-            logger.info("Tokenizing substrings...")
-            self.encoded_substring_data = self._encode_sequences(
-                self.filtered_substring_data,
-                tokenizer,
-                "max_length",
-                add_special_tokens=False,
-            )
-            self.substring_masks = self._get_substring_masks()
-
-    def _encode_sequences(self, data, tokenizer, max_length, add_special_tokens):
-        """Encode sequences using the tokenizer."""
-        labels, strs = zip(*data)
-
-        # Convert max_length to int if needed
-        if max_length == "max_length":
-            max_length = max(len(s) for s in strs) + (2 if add_special_tokens else 0)
-
-        encoded_sequences = []
-        for label, seq in zip(labels, strs):
-            # Tokenize the sequence
-            tokens = tokenizer(
-                seq,
-                truncation=True,
-                padding="max_length",
-                max_length=max_length,
-                add_special_tokens=add_special_tokens,
-                return_tensors="pt",
-            )
-
-            encoded_sequences.append(
-                (
-                    label,
-                    seq,
-                    tokens["input_ids"].squeeze(0),
-                    tokens["attention_mask"].squeeze(0),
-                )
-            )
-
-        return encoded_sequences
-
-    def get_max_encoded_length(self):
-        """Get maximum encoded sequence length."""
-        return max(len(toks) for _, _, toks, _ in self.encoded_data)
-
-    def safe_collate(self, batch):
-        """Collate function for data loader."""
-        if self.substring_dict:
-            labels, seqs, toks, attn_masks, substring_masks = zip(*batch)
-            return (
-                list(labels),
-                list(seqs),
-                torch.stack(toks),
-                torch.stack(attn_masks),
-                torch.stack(substring_masks),
-            )
-        else:
-            labels, seqs, toks, attn_masks = zip(*batch)
-            return (
-                list(labels),
-                list(seqs),
-                torch.stack(toks),
-                torch.stack(attn_masks),
-                None,
-            )
-
-    def __getitem__(self, idx):
-        """Get item from dataset."""
-        labels, seqs, toks, attn_mask = self.encoded_data[idx]
-        if self.substring_dict:
-            substring_masks = self.substring_masks[idx]
-            return labels, seqs, toks, attn_mask, substring_masks
-        else:
-            return labels, seqs, toks, attn_mask
