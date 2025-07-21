@@ -55,7 +55,9 @@ class CustomEmbedder(BaseEmbedder):
         self.valid_tokens = self._get_valid_tokens()
         self.bracket_type = pepe.utils.get_bracket_type(self.tokenizer)
         pepe.utils.check_input_tokens(
-            self.valid_tokens, self.sequences, self.model_name, 
+            self.valid_tokens,
+            self.sequences,
+            self.model_name,
         )
 
         # Set up special tokens
@@ -157,7 +159,7 @@ class CustomEmbedder(BaseEmbedder):
         model.eval()
 
         # Move model to appropriate device
-        if torch.cuda.is_available() and self.device.type == "cuda":
+        if torch.cuda.is_available() and self.device.type == torch.device("cuda"):
             model = model.cuda()
             logger.info("Transferred custom model to GPU")
         else:

@@ -73,7 +73,7 @@ class ESMEmbedder(BaseEmbedder):
         )
 
         # Moving the model to GPU if available for faster processing
-        if torch.cuda.is_available() and self.device == "cuda":
+        if torch.cuda.is_available() and self.device == torch.device("cuda"):
             model = model.cuda()
             logger.info("Transferred model to GPU")
         else:

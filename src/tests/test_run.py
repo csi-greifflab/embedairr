@@ -10,7 +10,7 @@ sys.argv = [
     "--experiment_name",
     "test",
     "--model_name",
-    "ZYMScott/antiberty",
+    "esm2_t33_650M_UR50D",
     "--fasta_path",
     "src/tests/test_files/test.fasta",
     "--output_path",
@@ -20,12 +20,10 @@ sys.argv = [
     "--extract_embeddings",
     "mean_pooled",
     "per_token",
-    "substring_pooling",
+    "substring_pooled",
     "attention_head",
-    "--batch_writing",
+    "--streaming_output",
     "true",
-    "--device",
-    "cpu",
 ]
 
 args = parse_arguments()
